@@ -11,11 +11,15 @@ For each configured directory, this script reports:
 import argparse
 import functools
 import grp
+import logging
 import os
 import pwd
 import sys
 
 import yaml
+from tqdm import tqdm
+
+logger = logging.getLogger(__name__)
 
 
 @functools.lru_cache(maxsize=None)
@@ -155,11 +159,18 @@ def main(config_path: str = "config.yaml", group: str | None = None) -> None:
         print("No directories specified in configuration.", file=sys.stderr)
         sys.exit(1)
 
-    for path in directories:
+    logger.info("Directories supplied: %s", directories)
+
+    if group is not None:
+        members = get_group_members(group)
+        logger.info("Users found in group '%s': %s", group, sorted(members))
+
+    for path in tqdm(directories, desc="Processing directories", unit="dir", file=sys.stderr):
         report_directory(path, group=group)
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     parser = argparse.ArgumentParser(
         description="Report directory statistics for locations defined in a config YAML."
     )

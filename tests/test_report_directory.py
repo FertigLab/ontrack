@@ -1,6 +1,7 @@
 """Tests for report_directory.py"""
 
 import grp
+import logging
 import os
 import pwd
 import sys
@@ -367,3 +368,61 @@ def test_main_with_group(tmp_path, capsys):
     assert str(data_dir) in captured.out
     assert "Group" in captured.out
     assert group_name in captured.out
+
+
+# ---------------------------------------------------------------------------
+# logging
+# ---------------------------------------------------------------------------
+
+
+def test_main_logs_directories(tmp_path, caplog):
+    """main logs the list of directories supplied in the config."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "file.txt").write_text("hello")
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(f"directories:\n  - {data_dir}\n")
+
+    with caplog.at_level(logging.INFO, logger="report_directory"):
+        main(str(config_file))
+
+    assert "Directories supplied" in caplog.text
+    assert str(data_dir) in caplog.text
+
+
+def test_main_logs_group_members(tmp_path, caplog):
+    """main logs the users found in the supplied group."""
+    current_uid = os.getuid()
+    current_gid = os.getgid()
+    current_user = pwd.getpwuid(current_uid).pw_name
+    group_name = grp.getgrgid(current_gid).gr_name
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "file.txt").write_text("hello")
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(f"directories:\n  - {data_dir}\n")
+
+    with caplog.at_level(logging.INFO, logger="report_directory"):
+        main(str(config_file), group=group_name)
+
+    assert "Users found in group" in caplog.text
+    assert group_name in caplog.text
+    assert current_user in caplog.text
+
+
+def test_main_no_group_logging_skipped(tmp_path, caplog):
+    """main does not log group members when no group is supplied."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "file.txt").write_text("hello")
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(f"directories:\n  - {data_dir}\n")
+
+    with caplog.at_level(logging.INFO, logger="report_directory"):
+        main(str(config_file))
+
+    assert "Users found in group" not in caplog.text
