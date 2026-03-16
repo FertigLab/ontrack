@@ -1,7 +1,17 @@
 #!/usr/bin/env python3
 """Report directory statistics for locations specified in a config YAML file.
 
-For each configured directory, this script reports:
+Two operating modes are supported:
+
+* **Group mode** (``--group`` supplied or ``group:`` set in the config file):
+  For each configured directory, the script finds first-level subdirectories
+  owned by users who belong to the specified Unix group and reports stats
+  for each of those subdirectories.
+
+* **Default mode** (no group specified):
+  Stats are reported directly for each configured directory.
+
+Each report includes:
   - Directory path
   - Owning username
   - Number of files
@@ -69,6 +79,26 @@ def get_group_members(group_name: str) -> set[str]:
     return members
 
 
+def get_group_subdirectories(parent_dir: str, group_members: set[str]) -> list[str]:
+    """Return first-level subdirectories of *parent_dir* owned by any user in *group_members*.
+
+    Only the immediate children of *parent_dir* are inspected; the tree is not
+    traversed further.  Entries that cannot be stat'd are silently skipped.
+    """
+    subdirs: list[str] = []
+    try:
+        entries = sorted(os.scandir(parent_dir), key=lambda e: e.name)
+    except OSError:
+        return subdirs
+    for entry in entries:
+        try:
+            if entry.is_dir(follow_symlinks=False) and get_username(entry.path) in group_members:
+                subdirs.append(entry.path)
+        except OSError:
+            pass
+    return subdirs
+
+
 def get_directory_stats(path: str, group: str | None = None) -> dict:
     """Return file count and total size (bytes) for a directory tree.
 
@@ -133,6 +163,10 @@ def main(config_path: str = "config.yaml", group: str | None = None) -> None:
     config = load_config(config_path)
     directories = config.get("directories", [])
 
+    # Allow the group to be specified in the config file; CLI takes precedence.
+    if group is None:
+        group = config.get("group")
+
     if not directories:
         print("No directories specified in configuration.", file=sys.stderr)
         sys.exit(1)
@@ -143,8 +177,21 @@ def main(config_path: str = "config.yaml", group: str | None = None) -> None:
         members = get_group_members(group)
         logger.info("Users found in group '%s': %s", group, sorted(members))
 
-    for path in tqdm(directories, desc="Processing directories", unit="dir", file=sys.stderr):
-        report_directory(path, group=group)
+        subdirs: list[str] = []
+        for parent_dir in directories:
+            if not pathlib.Path(parent_dir).is_dir():
+                print(
+                    f"WARNING: '{parent_dir}' is not a valid directory – skipping.",
+                    file=sys.stderr,
+                )
+                continue
+            subdirs.extend(get_group_subdirectories(parent_dir, members))
+
+        for path in tqdm(subdirs, desc="Processing directories", unit="dir", file=sys.stderr):
+            report_directory(path, group=group)
+    else:
+        for path in tqdm(directories, desc="Processing directories", unit="dir", file=sys.stderr):
+            report_directory(path, group=group)
 
 
 if __name__ == "__main__":
@@ -160,7 +207,10 @@ if __name__ == "__main__":
     parser.add_argument(
         "--group",
         default=None,
-        help="Only count files owned by users belonging to this Unix group.",
+        help=(
+            "For each configured directory, report only first-level subdirectories "
+            "owned by users belonging to this Unix group."
+        ),
     )
     args = parser.parse_args()
     main(args.config, group=args.group)

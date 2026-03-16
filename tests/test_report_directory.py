@@ -19,6 +19,7 @@ from report_directory import (
     format_size,
     get_directory_stats,
     get_group_members,
+    get_group_subdirectories,
     get_username,
     load_config,
     main,
@@ -305,20 +306,23 @@ def test_report_directory_without_group_no_group_line(capsys):
 
 
 def test_main_with_group(tmp_path, capsys):
-    """main passes the group parameter through and prints it in output."""
+    """main reports first-level subdirectories owned by group members."""
     current_gid = os.getgid()
     group_name = grp.getgrgid(current_gid).gr_name
 
     data_dir = tmp_path / "data"
     data_dir.mkdir()
-    (data_dir / "file.txt").write_text("hello world")
+    # Create a subdirectory owned by the current user (who is in group_name).
+    user_subdir = data_dir / "user_dir"
+    user_subdir.mkdir()
+    (user_subdir / "file.txt").write_text("hello world")
 
     config_file = tmp_path / "config.yaml"
     config_file.write_text(f"directories:\n  - {data_dir}\n")
 
     main(str(config_file), group=group_name)
     captured = capsys.readouterr()
-    assert str(data_dir) in captured.out
+    assert str(user_subdir) in captured.out
     assert "Group" in captured.out
     assert group_name in captured.out
 
@@ -379,3 +383,138 @@ def test_main_no_group_logging_skipped(tmp_path, caplog):
         main(str(config_file))
 
     assert "Users found in group" not in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# get_group_subdirectories
+# ---------------------------------------------------------------------------
+
+
+def test_get_group_subdirectories_returns_owned_subdirs(tmp_path):
+    """Subdirectories owned by the current user are returned when in the group."""
+    current_uid = os.getuid()
+    current_gid = os.getgid()
+    current_user = pwd.getpwuid(current_uid).pw_name
+    group_name = grp.getgrgid(current_gid).gr_name
+    members = get_group_members(group_name)
+
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    owned_sub = parent / "owned"
+    owned_sub.mkdir()
+
+    result = get_group_subdirectories(str(parent), members)
+    assert str(owned_sub) in result
+    assert current_user  # sanity-check that we know the user
+
+
+def test_get_group_subdirectories_empty_dir(tmp_path):
+    """An empty directory yields an empty list."""
+    parent = tmp_path / "empty"
+    parent.mkdir()
+    result = get_group_subdirectories(str(parent), {"anyone"})
+    assert result == []
+
+
+def test_get_group_subdirectories_excludes_non_member(tmp_path):
+    """Subdirectories owned by users not in the group are excluded."""
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    (parent / "sub").mkdir()
+
+    # Use an empty member set so nothing matches.
+    result = get_group_subdirectories(str(parent), set())
+    assert result == []
+
+
+def test_get_group_subdirectories_ignores_files(tmp_path):
+    """Regular files inside the parent directory are not returned."""
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    (parent / "file.txt").write_text("data")
+
+    current_user = pwd.getpwuid(os.getuid()).pw_name
+    result = get_group_subdirectories(str(parent), {current_user})
+    assert result == []
+
+
+def test_get_group_subdirectories_nonexistent_parent():
+    """A non-existent parent directory returns an empty list (no exception)."""
+    result = get_group_subdirectories("/nonexistent/path/xyz_abc", {"anyone"})
+    assert result == []
+
+
+def test_get_group_subdirectories_only_first_level(tmp_path):
+    """Only immediate children are inspected; nested subdirectories are ignored."""
+    current_user = pwd.getpwuid(os.getuid()).pw_name
+    members = {current_user}
+
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    child = parent / "child"
+    child.mkdir()
+    grandchild = child / "grandchild"
+    grandchild.mkdir()
+
+    result = get_group_subdirectories(str(parent), members)
+    assert str(child) in result
+    assert str(grandchild) not in result
+
+
+# ---------------------------------------------------------------------------
+# main – group from config file
+# ---------------------------------------------------------------------------
+
+
+def test_main_group_from_config(tmp_path, capsys):
+    """main reads the group from the config file when --group is not supplied."""
+    current_gid = os.getgid()
+    group_name = grp.getgrgid(current_gid).gr_name
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    user_subdir = data_dir / "user_dir"
+    user_subdir.mkdir()
+    (user_subdir / "file.txt").write_text("content")
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(f"directories:\n  - {data_dir}\ngroup: {group_name}\n")
+
+    main(str(config_file))  # no group kwarg; should come from config
+    captured = capsys.readouterr()
+    assert str(user_subdir) in captured.out
+    assert group_name in captured.out
+
+
+def test_main_cli_group_overrides_config(tmp_path, capsys):
+    """CLI --group takes precedence over the group key in the config file."""
+    current_gid = os.getgid()
+    group_name = grp.getgrgid(current_gid).gr_name
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    user_subdir = data_dir / "user_dir"
+    user_subdir.mkdir()
+    (user_subdir / "file.txt").write_text("content")
+
+    config_file = tmp_path / "config.yaml"
+    # Config contains a bogus group; the CLI group should win.
+    config_file.write_text(f"directories:\n  - {data_dir}\ngroup: __bogus_group__\n")
+
+    main(str(config_file), group=group_name)
+    captured = capsys.readouterr()
+    assert str(user_subdir) in captured.out
+    assert group_name in captured.out
+
+
+def test_main_with_group_invalid_parent_dir(tmp_path, capsys):
+    """A configured directory that does not exist emits a warning and is skipped."""
+    current_gid = os.getgid()
+    group_name = grp.getgrgid(current_gid).gr_name
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("directories:\n  - /nonexistent/path/xyz\n")
+
+    main(str(config_file), group=group_name)
+    captured = capsys.readouterr()
+    assert "WARNING" in captured.err
