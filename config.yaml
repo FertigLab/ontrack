@@ -1,0 +1,4 @@
+# ontrack configuration
+# Specify the directories to include in the report
+directories:
+  - /path/to/your/data
