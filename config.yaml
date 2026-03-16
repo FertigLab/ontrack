@@ -1,4 +1,11 @@
 # ontrack configuration
-# Specify the directories to include in the report
+# Specify the top-level directories to scan.
+# For each directory, first-level subdirectories owned by members of `group`
+# will be reported.
 directories:
   - /path/to/your/data
+
+# Unix group whose members' subdirectories should be reported.
+# Can also be supplied via the --group command-line argument (CLI takes
+# precedence over this setting).
+group: your_group_name
