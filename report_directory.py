@@ -9,6 +9,7 @@ For each configured directory, this script reports:
 """
 
 import argparse
+import grp
 import os
 import pwd
 import sys
@@ -25,8 +26,38 @@ def get_username(path: str) -> str:
         return str(os.stat(path).st_uid)
 
 
-def get_directory_stats(path: str) -> dict:
-    """Return file count and total size (bytes) for a directory tree."""
+def get_group_members(group_name: str) -> set[str]:
+    """Return the set of usernames belonging to the given Unix group.
+
+    Includes both secondary members listed in the group database and users
+    whose primary GID matches the group.
+    """
+    try:
+        group_info = grp.getgrnam(group_name)
+    except KeyError:
+        raise ValueError(f"Group '{group_name}' not found.")
+
+    members: set[str] = set(group_info.gr_mem)
+
+    # Also include users for whom this group is their primary group.
+    gid = group_info.gr_gid
+    for pw_entry in pwd.getpwall():
+        if pw_entry.pw_gid == gid:
+            members.add(pw_entry.pw_name)
+
+    return members
+
+
+def get_directory_stats(path: str, group: str | None = None) -> dict:
+    """Return file count and total size (bytes) for a directory tree.
+
+    If *group* is given, only files owned by users belonging to that Unix
+    group are counted.
+    """
+    allowed_users: set[str] | None = None
+    if group is not None:
+        allowed_users = get_group_members(group)
+
     file_count = 0
     total_size = 0
     for dirpath, _dirnames, filenames in os.walk(path):
@@ -34,6 +65,9 @@ def get_directory_stats(path: str) -> dict:
             filepath = os.path.join(dirpath, filename)
             try:
                 stat = os.lstat(filepath)
+                if allowed_users is not None:
+                    if get_username(filepath) not in allowed_users:
+                        continue
                 total_size += stat.st_size
                 file_count += 1
             except OSError:
@@ -51,17 +85,19 @@ def format_size(size_bytes: int) -> str:
     return f"{size_bytes:.2f} TB"
 
 
-def report_directory(path: str) -> None:
+def report_directory(path: str, group: str | None = None) -> None:
     """Print a report for a single directory."""
     if not os.path.isdir(path):
         print(f"WARNING: '{path}' is not a valid directory – skipping.", file=sys.stderr)
         return
 
     username = get_username(path)
-    stats = get_directory_stats(path)
+    stats = get_directory_stats(path, group=group)
 
     print(f"Directory : {path}")
     print(f"Username  : {username}")
+    if group is not None:
+        print(f"Group     : {group}")
     print(f"Files     : {stats['file_count']}")
     print(f"Total size: {format_size(stats['total_size'])}")
     print()
@@ -73,7 +109,7 @@ def load_config(config_path: str) -> dict:
         return yaml.safe_load(fh)
 
 
-def main(config_path: str = "config.yaml") -> None:
+def main(config_path: str = "config.yaml", group: str | None = None) -> None:
     config = load_config(config_path)
     directories = config.get("directories", [])
 
@@ -82,7 +118,7 @@ def main(config_path: str = "config.yaml") -> None:
         sys.exit(1)
 
     for path in directories:
-        report_directory(path)
+        report_directory(path, group=group)
 
 
 if __name__ == "__main__":
@@ -94,5 +130,10 @@ if __name__ == "__main__":
         default="config.yaml",
         help="Path to the configuration YAML file (default: config.yaml)",
     )
+    parser.add_argument(
+        "--group",
+        default=None,
+        help="Only count files owned by users belonging to this Unix group.",
+    )
     args = parser.parse_args()
-    main(args.config)
+    main(args.config, group=args.group)
