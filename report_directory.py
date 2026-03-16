@@ -69,38 +69,15 @@ def get_group_members(group_name: str) -> set[str]:
     return members
 
 
-def _get_group_member_uids(group_name: str) -> set[int]:
-    """Return the set of UIDs belonging to the given Unix group.
-
-    This mirrors the logic of :func:`get_group_members` but returns UIDs so
-    that callers can compare directly against ``Path.lstat().st_uid`` without
-    an extra stat call or a UID→username translation per file.
-    """
-    try:
-        group_info = grp.getgrnam(group_name)
-    except KeyError:
-        raise ValueError(f"Group '{group_name}' not found.")
-
-    gid = group_info.gr_gid
-    member_names: set[str] = set(group_info.gr_mem)
-
-    uids: set[int] = set()
-    for pw_entry in pwd.getpwall():
-        if pw_entry.pw_name in member_names or pw_entry.pw_gid == gid:
-            uids.add(pw_entry.pw_uid)
-
-    return uids
-
-
 def get_directory_stats(path: str, group: str | None = None) -> dict:
     """Return file count and total size (bytes) for a directory tree.
 
     If *group* is given, only files owned by users belonging to that Unix
     group are counted.
     """
-    allowed_uids: set[int] | None = None
+    allowed_users: set[str] | None = None
     if group is not None:
-        allowed_uids = _get_group_member_uids(group)
+        allowed_users = get_group_members(group)
 
     file_count = 0
     total_size = 0
@@ -109,12 +86,11 @@ def get_directory_stats(path: str, group: str | None = None) -> dict:
         for filename in filenames:
             filepath = dir_path / filename
             try:
-                stat = filepath.lstat()
-                if allowed_uids is not None and stat.st_uid not in allowed_uids:
+                if allowed_users is not None and filepath.owner() not in allowed_users:
                     continue
-                total_size += stat.st_size
+                total_size += filepath.lstat().st_size
                 file_count += 1
-            except OSError:
+            except (OSError, KeyError):
                 pass
     return {"file_count": file_count, "total_size": total_size}
 
