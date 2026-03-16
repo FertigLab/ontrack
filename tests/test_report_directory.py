@@ -14,6 +14,8 @@ import yaml
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from report_directory import (
+    _get_group_member_uids,
+    _uid_to_username,
     format_size,
     get_directory_stats,
     get_group_members,
@@ -22,6 +24,76 @@ from report_directory import (
     main,
     report_directory,
 )
+
+
+# ---------------------------------------------------------------------------
+# _uid_to_username (caching helper)
+# ---------------------------------------------------------------------------
+
+
+def test_uid_to_username_current_user():
+    """_uid_to_username returns the current user's login name."""
+    uid = os.getuid()
+    expected = pwd.getpwuid(uid).pw_name
+    assert _uid_to_username(uid) == expected
+
+
+def test_uid_to_username_unknown_uid():
+    """_uid_to_username returns the UID as a string for unknown UIDs."""
+    # Use a UID that is almost certainly not assigned on any real system.
+    # 2**31 - 1 is the maximum 32-bit signed integer and well beyond any
+    # normal UID range.
+    missing_uid = 2**31 - 1
+    known_uids = {e.pw_uid for e in pwd.getpwall()}
+    if missing_uid in known_uids:
+        pytest.skip("UID 2**31-1 unexpectedly exists on this system")
+    assert _uid_to_username(missing_uid) == str(missing_uid)
+
+
+# ---------------------------------------------------------------------------
+# _get_group_member_uids
+# ---------------------------------------------------------------------------
+
+
+def test_get_group_member_uids_current_user():
+    """Current user's UID is included in their primary group's UID set."""
+    current_uid = os.getuid()
+    current_gid = os.getgid()
+    group_name = grp.getgrgid(current_gid).gr_name
+
+    uids = _get_group_member_uids(group_name)
+    assert isinstance(uids, set)
+    assert current_uid in uids
+
+
+def test_get_group_member_uids_invalid_group():
+    with pytest.raises(ValueError, match="not found"):
+        _get_group_member_uids("__nonexistent_group_xyz__")
+
+
+def test_get_group_member_uids_consistent_with_get_group_members():
+    """UID set and username set describe the same users."""
+    current_gid = os.getgid()
+    group_name = grp.getgrgid(current_gid).gr_name
+
+    uids = _get_group_member_uids(group_name)
+    usernames = get_group_members(group_name)
+
+    # Every username in the member set must have a UID in the UID set.
+    for name in usernames:
+        try:
+            uid = pwd.getpwnam(name).pw_uid
+        except KeyError:
+            continue
+        assert uid in uids, f"UID for {name!r} missing from UID set"
+
+    # Every UID in the UID set must correspond to a username in the member set.
+    for uid in uids:
+        try:
+            name = pwd.getpwuid(uid).pw_name
+        except KeyError:
+            continue
+        assert name in usernames, f"Username {name!r} missing from member set"
 
 
 # ---------------------------------------------------------------------------
