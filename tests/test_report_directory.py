@@ -1,6 +1,8 @@
 """Tests for report_directory.py"""
 
+import grp
 import os
+import pwd
 import sys
 import tempfile
 import textwrap
@@ -14,6 +16,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from report_directory import (
     format_size,
     get_directory_stats,
+    get_group_members,
     get_username,
     load_config,
     main,
@@ -164,3 +167,131 @@ def test_main_with_valid_directory(tmp_path, capsys):
     assert str(data_dir) in captured.out
     assert "Files" in captured.out
     assert "Total size" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# get_group_members
+# ---------------------------------------------------------------------------
+
+
+def test_get_group_members_current_user():
+    """The current user should appear in their own primary group's member set."""
+    current_uid = os.getuid()
+    current_gid = os.getgid()
+    current_user = pwd.getpwuid(current_uid).pw_name
+    group_name = grp.getgrgid(current_gid).gr_name
+
+    members = get_group_members(group_name)
+    assert isinstance(members, set)
+    assert current_user in members
+
+
+def test_get_group_members_invalid_group():
+    with pytest.raises(ValueError, match="not found"):
+        get_group_members("__nonexistent_group_xyz__")
+
+
+# ---------------------------------------------------------------------------
+# get_directory_stats with group filter
+# ---------------------------------------------------------------------------
+
+
+def test_get_directory_stats_group_matches_current_user():
+    """Files owned by the current user are counted when their group is used."""
+    current_uid = os.getuid()
+    current_gid = os.getgid()
+    group_name = grp.getgrgid(current_gid).gr_name
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path_a = os.path.join(tmpdir, "a.txt")
+        with open(path_a, "w") as f:
+            f.write("hello")  # 5 bytes
+
+        stats = get_directory_stats(tmpdir, group=group_name)
+        assert stats["file_count"] == 1
+        assert stats["total_size"] == 5
+
+
+def test_get_directory_stats_group_excludes_files():
+    """When a group has no matching file owners, counts should be zero."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path_a = os.path.join(tmpdir, "a.txt")
+        with open(path_a, "w") as f:
+            f.write("hello")
+
+        # Use a group that the current user does not belong to (root group
+        # members typically don't include regular users).  Find the first
+        # group whose member set does not include the current user.
+        current_user = pwd.getpwuid(os.getuid()).pw_name
+        other_group = None
+        for g in grp.getgrall():
+            members = set(g.gr_mem)
+            # Also add primary-group users
+            for pw_entry in pwd.getpwall():
+                if pw_entry.pw_gid == g.gr_gid:
+                    members.add(pw_entry.pw_name)
+            if current_user not in members:
+                other_group = g.gr_name
+                break
+
+        if other_group is None:
+            pytest.skip("No group found that excludes the current user")
+
+        stats = get_directory_stats(tmpdir, group=other_group)
+        assert stats["file_count"] == 0
+        assert stats["total_size"] == 0
+
+
+# ---------------------------------------------------------------------------
+# report_directory with group
+# ---------------------------------------------------------------------------
+
+
+def test_report_directory_with_group(capsys):
+    """report_directory prints the Group line when a group is supplied."""
+    current_gid = os.getgid()
+    group_name = grp.getgrgid(current_gid).gr_name
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with open(os.path.join(tmpdir, "sample.txt"), "w") as f:
+            f.write("data")
+
+        report_directory(tmpdir, group=group_name)
+        captured = capsys.readouterr()
+        assert "Group" in captured.out
+        assert group_name in captured.out
+
+
+def test_report_directory_without_group_no_group_line(capsys):
+    """report_directory does not print a Group line when no group is given."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with open(os.path.join(tmpdir, "sample.txt"), "w") as f:
+            f.write("data")
+
+        report_directory(tmpdir)
+        captured = capsys.readouterr()
+        assert "Group" not in captured.out
+
+
+# ---------------------------------------------------------------------------
+# main with group
+# ---------------------------------------------------------------------------
+
+
+def test_main_with_group(tmp_path, capsys):
+    """main passes the group parameter through and prints it in output."""
+    current_gid = os.getgid()
+    group_name = grp.getgrgid(current_gid).gr_name
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "file.txt").write_text("hello world")
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(f"directories:\n  - {data_dir}\n")
+
+    main(str(config_file), group=group_name)
+    captured = capsys.readouterr()
+    assert str(data_dir) in captured.out
+    assert "Group" in captured.out
+    assert group_name in captured.out
