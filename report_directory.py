@@ -13,6 +13,7 @@ import functools
 import grp
 import logging
 import os
+import pathlib
 import pwd
 import sys
 
@@ -37,12 +38,12 @@ def _uid_to_username(uid: int) -> str:
 def get_username(path: str) -> str:
     """Return the username of the directory owner.
 
-    Returns an empty string if the path cannot be stat'd.
+    Returns an empty string if the path cannot be stat'd (``OSError``) or
+    the owner UID has no corresponding password-database entry (``KeyError``).
     """
     try:
-        uid = os.stat(path).st_uid
-        return _uid_to_username(uid)
-    except OSError:
+        return pathlib.Path(path).owner()
+    except (OSError, KeyError):
         return ""
 
 
@@ -72,8 +73,8 @@ def _get_group_member_uids(group_name: str) -> set[int]:
     """Return the set of UIDs belonging to the given Unix group.
 
     This mirrors the logic of :func:`get_group_members` but returns UIDs so
-    that callers can compare directly against ``os.lstat().st_uid`` without
-    an extra ``os.stat`` call or a UID→username translation per file.
+    that callers can compare directly against ``Path.lstat().st_uid`` without
+    an extra stat call or a UID→username translation per file.
     """
     try:
         group_info = grp.getgrnam(group_name)
@@ -104,10 +105,11 @@ def get_directory_stats(path: str, group: str | None = None) -> dict:
     file_count = 0
     total_size = 0
     for dirpath, _dirnames, filenames in os.walk(path):
+        dir_path = pathlib.Path(dirpath)
         for filename in filenames:
-            filepath = os.path.join(dirpath, filename)
+            filepath = dir_path / filename
             try:
-                stat = os.lstat(filepath)
+                stat = filepath.lstat()
                 if allowed_uids is not None and stat.st_uid not in allowed_uids:
                     continue
                 total_size += stat.st_size
@@ -129,7 +131,7 @@ def format_size(size_bytes: int) -> str:
 
 def report_directory(path: str, group: str | None = None) -> None:
     """Print a report for a single directory."""
-    if not os.path.isdir(path):
+    if not pathlib.Path(path).is_dir():
         print(f"WARNING: '{path}' is not a valid directory – skipping.", file=sys.stderr)
         return
 
