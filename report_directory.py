@@ -9,6 +9,7 @@ For each configured directory, this script reports:
 """
 
 import argparse
+import functools
 import grp
 import os
 import pwd
@@ -17,13 +18,28 @@ import sys
 import yaml
 
 
+@functools.lru_cache(maxsize=None)
+def _uid_to_username(uid: int) -> str:
+    """Return the username for a UID, falling back to the numeric string.
+
+    Results are cached so repeated lookups for the same UID are free.
+    """
+    try:
+        return pwd.getpwuid(uid).pw_name
+    except KeyError:
+        return str(uid)
+
+
 def get_username(path: str) -> str:
-    """Return the username of the directory owner."""
+    """Return the username of the directory owner.
+
+    Returns an empty string if the path cannot be stat'd.
+    """
     try:
         uid = os.stat(path).st_uid
-        return pwd.getpwuid(uid).pw_name
-    except (KeyError, OSError):
-        return str(os.stat(path).st_uid)
+        return _uid_to_username(uid)
+    except OSError:
+        return ""
 
 
 def get_group_members(group_name: str) -> set[str]:
@@ -48,15 +64,38 @@ def get_group_members(group_name: str) -> set[str]:
     return members
 
 
+def _get_group_member_uids(group_name: str) -> set[int]:
+    """Return the set of UIDs belonging to the given Unix group.
+
+    This mirrors the logic of :func:`get_group_members` but returns UIDs so
+    that callers can compare directly against ``os.lstat().st_uid`` without
+    an extra ``os.stat`` call or a UID→username translation per file.
+    """
+    try:
+        group_info = grp.getgrnam(group_name)
+    except KeyError:
+        raise ValueError(f"Group '{group_name}' not found.")
+
+    gid = group_info.gr_gid
+    member_names: set[str] = set(group_info.gr_mem)
+
+    uids: set[int] = set()
+    for pw_entry in pwd.getpwall():
+        if pw_entry.pw_name in member_names or pw_entry.pw_gid == gid:
+            uids.add(pw_entry.pw_uid)
+
+    return uids
+
+
 def get_directory_stats(path: str, group: str | None = None) -> dict:
     """Return file count and total size (bytes) for a directory tree.
 
     If *group* is given, only files owned by users belonging to that Unix
     group are counted.
     """
-    allowed_users: set[str] | None = None
+    allowed_uids: set[int] | None = None
     if group is not None:
-        allowed_users = get_group_members(group)
+        allowed_uids = _get_group_member_uids(group)
 
     file_count = 0
     total_size = 0
@@ -65,9 +104,8 @@ def get_directory_stats(path: str, group: str | None = None) -> dict:
             filepath = os.path.join(dirpath, filename)
             try:
                 stat = os.lstat(filepath)
-                if allowed_users is not None:
-                    if get_username(filepath) not in allowed_users:
-                        continue
+                if allowed_uids is not None and stat.st_uid not in allowed_uids:
+                    continue
                 total_size += stat.st_size
                 file_count += 1
             except OSError:
