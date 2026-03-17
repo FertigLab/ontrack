@@ -1,4 +1,4 @@
-"""Tests for report_directory.py"""
+"""Tests for ontrack.py"""
 
 import grp
 import logging
@@ -14,7 +14,7 @@ import yaml
 # Ensure the repo root is on the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from report_directory import (
+from ontrack import (
     _build_directory_entry,
     _uid_to_username,
     format_size,
@@ -342,7 +342,7 @@ def test_main_logs_directories(tmp_path, caplog):
     config_file = tmp_path / "config.yaml"
     config_file.write_text(f"directories:\n  - {data_dir}\n")
 
-    with caplog.at_level(logging.INFO, logger="report_directory"):
+    with caplog.at_level(logging.INFO, logger="ontrack"):
         main(str(config_file))
 
     assert "Directories supplied" in caplog.text
@@ -363,7 +363,7 @@ def test_main_logs_group_members(tmp_path, caplog):
     config_file = tmp_path / "config.yaml"
     config_file.write_text(f"directories:\n  - {data_dir}\n")
 
-    with caplog.at_level(logging.INFO, logger="report_directory"):
+    with caplog.at_level(logging.INFO, logger="ontrack"):
         main(str(config_file), group=group_name)
 
     assert "Users found in group" in caplog.text
@@ -380,7 +380,7 @@ def test_main_no_group_logging_skipped(tmp_path, caplog):
     config_file = tmp_path / "config.yaml"
     config_file.write_text(f"directories:\n  - {data_dir}\n")
 
-    with caplog.at_level(logging.INFO, logger="report_directory"):
+    with caplog.at_level(logging.INFO, logger="ontrack"):
         main(str(config_file))
 
     assert "Users found in group" not in caplog.text
@@ -544,7 +544,7 @@ def test_report_directory_light_mode_does_not_call_get_stats(monkeypatch):
     """In light mode, get_directory_stats is never called."""
     called = []
 
-    import report_directory as rd
+    import ontrack as rd
 
     original = rd.get_directory_stats
     monkeypatch.setattr(rd, "get_directory_stats", lambda *a, **kw: called.append(1) or original(*a, **kw))
