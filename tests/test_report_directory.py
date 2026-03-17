@@ -15,6 +15,7 @@ import yaml
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from report_directory import (
+    _build_directory_entry,
     _uid_to_username,
     format_size,
     get_directory_stats,
@@ -518,3 +519,182 @@ def test_main_with_group_invalid_parent_dir(tmp_path, capsys):
     main(str(config_file), group=group_name)
     captured = capsys.readouterr()
     assert "WARNING" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# light mode
+# ---------------------------------------------------------------------------
+
+
+def test_report_directory_light_mode_omits_stats(capsys):
+    """In light mode, Files and Total size lines are not printed."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with open(os.path.join(tmpdir, "sample.txt"), "w") as f:
+            f.write("data")
+
+        report_directory(tmpdir, light=True)
+        captured = capsys.readouterr()
+        assert "Directory" in captured.out
+        assert "Username" in captured.out
+        assert "Files" not in captured.out
+        assert "Total size" not in captured.out
+
+
+def test_report_directory_light_mode_does_not_call_get_stats(monkeypatch):
+    """In light mode, get_directory_stats is never called."""
+    called = []
+
+    import report_directory as rd
+
+    original = rd.get_directory_stats
+    monkeypatch.setattr(rd, "get_directory_stats", lambda *a, **kw: called.append(1) or original(*a, **kw))
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        report_directory(tmpdir, light=True)
+
+    assert called == [], "get_directory_stats should not be called in light mode"
+
+
+def test_main_light_mode_omits_stats(tmp_path, capsys):
+    """main in light mode does not print file count or size."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "file.txt").write_text("hello world")
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(f"directories:\n  - {data_dir}\n")
+
+    main(str(config_file), light=True)
+    captured = capsys.readouterr()
+    assert str(data_dir) in captured.out
+    assert "Files" not in captured.out
+    assert "Total size" not in captured.out
+
+
+# ---------------------------------------------------------------------------
+# YAML output (--output)
+# ---------------------------------------------------------------------------
+
+
+def test_main_output_writes_yaml(tmp_path):
+    """When output is given, a valid YAML file is written instead of printing."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "file.txt").write_text("hello world")
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(f"directories:\n  - {data_dir}\n")
+
+    output_file = str(tmp_path / "report.yaml")
+    main(str(config_file), output=output_file)
+
+    with open(output_file) as fh:
+        report = yaml.safe_load(fh)
+
+    assert isinstance(report, list)
+    assert len(report) == 1
+    entry = report[0]
+    assert entry["directory"] == str(data_dir)
+    assert "username" in entry
+    assert "file_count" in entry
+    assert "total_size" in entry
+    assert "total_size_human" in entry
+
+
+def test_main_output_does_not_print(tmp_path, capsys):
+    """When output is given, nothing is printed to stdout."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "file.txt").write_text("content")
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(f"directories:\n  - {data_dir}\n")
+
+    output_file = str(tmp_path / "report.yaml")
+    main(str(config_file), output=output_file)
+    captured = capsys.readouterr()
+    assert captured.out == ""
+
+
+def test_main_output_light_mode(tmp_path):
+    """YAML output in light mode omits file_count, total_size, total_size_human."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "file.txt").write_text("hello")
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(f"directories:\n  - {data_dir}\n")
+
+    output_file = str(tmp_path / "report.yaml")
+    main(str(config_file), light=True, output=output_file)
+
+    with open(output_file) as fh:
+        report = yaml.safe_load(fh)
+
+    assert isinstance(report, list)
+    entry = report[0]
+    assert entry["directory"] == str(data_dir)
+    assert "file_count" not in entry
+    assert "total_size" not in entry
+    assert "total_size_human" not in entry
+
+
+# ---------------------------------------------------------------------------
+# get_directory_stats with show_progress
+# ---------------------------------------------------------------------------
+
+
+def test_get_directory_stats_with_progress(tmp_path):
+    """get_directory_stats works correctly when show_progress=True."""
+    (tmp_path / "a.txt").write_text("hello")
+    (tmp_path / "b.txt").write_text("world!")
+
+    stats = get_directory_stats(str(tmp_path), show_progress=True)
+    assert stats["file_count"] == 2
+    assert stats["total_size"] == 11
+
+
+# ---------------------------------------------------------------------------
+# _build_directory_entry
+# ---------------------------------------------------------------------------
+
+
+def test_build_directory_entry_valid(tmp_path):
+    """_build_directory_entry returns a dict with all expected keys."""
+    (tmp_path / "f.txt").write_text("data")
+    entry = _build_directory_entry(str(tmp_path))
+    assert entry is not None
+    assert entry["directory"] == str(tmp_path)
+    assert "username" in entry
+    assert "file_count" in entry
+    assert "total_size" in entry
+    assert "total_size_human" in entry
+
+
+def test_build_directory_entry_light(tmp_path):
+    """_build_directory_entry in light mode omits stats keys."""
+    (tmp_path / "f.txt").write_text("data")
+    entry = _build_directory_entry(str(tmp_path), light=True)
+    assert entry is not None
+    assert "file_count" not in entry
+    assert "total_size" not in entry
+    assert "total_size_human" not in entry
+
+
+def test_build_directory_entry_invalid(capsys):
+    """_build_directory_entry returns None and warns for a non-existent path."""
+    result = _build_directory_entry("/nonexistent/path/xyz_abc")
+    assert result is None
+    captured = capsys.readouterr()
+    assert "WARNING" in captured.err
+
+
+def test_build_directory_entry_with_group(tmp_path):
+    """_build_directory_entry includes the group key when group is supplied."""
+    current_gid = os.getgid()
+    group_name = grp.getgrgid(current_gid).gr_name
+    (tmp_path / "f.txt").write_text("data")
+    entry = _build_directory_entry(str(tmp_path), group=group_name)
+    assert entry is not None
+    assert entry["group"] == group_name
+
