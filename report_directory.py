@@ -14,8 +14,17 @@ Two operating modes are supported:
 Each report includes:
   - Directory path
   - Owning username
-  - Number of files
-  - Total size
+  - Number of files (unless ``--light`` is given)
+  - Total size (unless ``--light`` is given)
+
+Optional flags
+--------------
+``--progress``
+    Show tqdm progress bars while scanning.  Off by default.
+``--light``
+    Skip file-count and size scanning; only report directory and owner.
+``--output <file>``
+    Write the report as YAML to *file*; otherwise print to stdout.
 """
 
 import argparse
@@ -99,11 +108,13 @@ def get_group_subdirectories(parent_dir: str, group_members: set[str]) -> list[s
     return subdirs
 
 
-def get_directory_stats(path: str, group: str | None = None) -> dict:
+def get_directory_stats(path: str, group: str | None = None, show_progress: bool = False) -> dict:
     """Return file count and total size (bytes) for a directory tree.
 
     If *group* is given, only files owned by users belonging to that Unix
-    group are counted.
+    group are counted.  If *show_progress* is ``True`` (default: ``False``),
+    a tqdm progress bar is displayed on stderr for each subdirectory visited
+    during the walk; set it to ``False`` to suppress all progress output.
     """
     allowed_users: set[str] | None = None
     if group is not None:
@@ -111,7 +122,16 @@ def get_directory_stats(path: str, group: str | None = None) -> dict:
 
     file_count = 0
     total_size = 0
-    for dirpath, _dirnames, filenames in os.walk(path):
+    walker = os.walk(path)
+    if show_progress:
+        walker = tqdm(
+            walker,
+            desc=f"Scanning {os.path.basename(path)}",
+            unit="dir",
+            file=sys.stderr,
+            leave=False,
+        )
+    for dirpath, _dirnames, filenames in walker:
         dir_path = pathlib.Path(dirpath)
         for filename in filenames:
             filepath = dir_path / filename
@@ -135,21 +155,52 @@ def format_size(size_bytes: int) -> str:
     return f"{size_bytes:.2f} TB"
 
 
-def report_directory(path: str, group: str | None = None) -> None:
-    """Print a report for a single directory."""
+def _build_directory_entry(
+    path: str,
+    group: str | None = None,
+    light: bool = False,
+    show_progress: bool = False,
+) -> dict | None:
+    """Collect stats for *path* and return them as a plain dict.
+
+    Returns ``None`` (and prints a warning to stderr) when *path* is not a
+    valid directory.  In *light* mode only the path and username are included;
+    file-count and size scanning are skipped.
+    """
     if not pathlib.Path(path).is_dir():
         print(f"WARNING: '{path}' is not a valid directory – skipping.", file=sys.stderr)
-        return
+        return None
 
     username = get_username(path)
-    stats = get_directory_stats(path, group=group)
-
-    print(f"Directory : {path}")
-    print(f"Username  : {username}")
+    entry: dict = {"directory": path, "username": username}
     if group is not None:
-        print(f"Group     : {group}")
-    print(f"Files     : {stats['file_count']}")
-    print(f"Total size: {format_size(stats['total_size'])}")
+        entry["group"] = group
+    if not light:
+        stats = get_directory_stats(path, group=group, show_progress=show_progress)
+        entry["file_count"] = stats["file_count"]
+        entry["total_size"] = stats["total_size"]
+        entry["total_size_human"] = format_size(stats["total_size"])
+    return entry
+
+
+def report_directory(
+    path: str,
+    group: str | None = None,
+    light: bool = False,
+    show_progress: bool = False,
+) -> None:
+    """Print a report for a single directory."""
+    entry = _build_directory_entry(path, group=group, light=light, show_progress=show_progress)
+    if entry is None:
+        return
+
+    print(f"Directory : {entry['directory']}")
+    print(f"Username  : {entry['username']}")
+    if "group" in entry:
+        print(f"Group     : {entry['group']}")
+    if "file_count" in entry:
+        print(f"Files     : {entry['file_count']}")
+        print(f"Total size: {entry['total_size_human']}")
     print()
 
 
@@ -159,7 +210,13 @@ def load_config(config_path: str) -> dict:
         return yaml.safe_load(fh)
 
 
-def main(config_path: str = "config.yaml", group: str | None = None) -> None:
+def main(
+    config_path: str = "config.yaml",
+    group: str | None = None,
+    light: bool = False,
+    progress: bool = False,
+    output: str | None = None,
+) -> None:
     config = load_config(config_path)
     directories = config.get("directories", [])
 
@@ -187,11 +244,28 @@ def main(config_path: str = "config.yaml", group: str | None = None) -> None:
                 continue
             subdirs.extend(get_group_subdirectories(parent_dir, members))
 
-        for path in tqdm(subdirs, desc="Processing directories", unit="dir", file=sys.stderr):
-            report_directory(path, group=group)
+        paths_to_process: list[str] = subdirs
     else:
-        for path in tqdm(directories, desc="Processing directories", unit="dir", file=sys.stderr):
-            report_directory(path, group=group)
+        paths_to_process = directories
+
+    iterator = (
+        tqdm(paths_to_process, desc="Processing directories", unit="dir", file=sys.stderr)
+        if progress
+        else paths_to_process
+    )
+
+    if output is not None:
+        results = []
+        for path in iterator:
+            entry = _build_directory_entry(path, group=group, light=light, show_progress=progress)
+            if entry is not None:
+                results.append(entry)
+        with open(output, "w") as fh:
+            yaml.dump(results, fh, default_flow_style=False, allow_unicode=True)
+        logger.info("Report written to %s", output)
+    else:
+        for path in iterator:
+            report_directory(path, group=group, light=light, show_progress=progress)
 
 
 if __name__ == "__main__":
@@ -212,5 +286,23 @@ if __name__ == "__main__":
             "owned by users belonging to this Unix group."
         ),
     )
+    parser.add_argument(
+        "--progress",
+        action="store_true",
+        default=False,
+        help="Show tqdm progress bars while scanning (default: off).",
+    )
+    parser.add_argument(
+        "--light",
+        action="store_true",
+        default=False,
+        help="Light mode: skip file-count and size scanning; only report directory and owner.",
+    )
+    parser.add_argument(
+        "--output",
+        default=None,
+        metavar="FILE",
+        help="Write the report as YAML to FILE instead of printing to stdout.",
+    )
     args = parser.parse_args()
-    main(args.config, group=args.group)
+    main(args.config, group=args.group, light=args.light, progress=args.progress, output=args.output)
