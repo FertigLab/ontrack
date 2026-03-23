@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from ontrack import (
     _build_directory_entry,
+    _find_reporting_directories,
     _uid_to_username,
     format_size,
     get_directory_stats,
@@ -445,8 +446,8 @@ def test_get_group_subdirectories_nonexistent_parent():
     assert result == []
 
 
-def test_get_group_subdirectories_only_first_level(tmp_path):
-    """Only immediate children are inspected; nested subdirectories are ignored."""
+def test_get_group_subdirectories_descends_past_empty_intermediate_dir(tmp_path):
+    """When an owned child contains only subdirectories, descent continues to the leaf."""
     current_user = pwd.getpwuid(os.getuid()).pw_name
     members = {current_user}
 
@@ -458,8 +459,100 @@ def test_get_group_subdirectories_only_first_level(tmp_path):
     grandchild.mkdir()
 
     result = get_group_subdirectories(str(parent), members)
+    # child contains only directories → not the reporting directory
+    assert str(child) not in result
+    # grandchild is empty (leaf) → it is the reporting directory
+    assert str(grandchild) in result
+
+
+def test_get_group_subdirectories_stops_at_child_with_file(tmp_path):
+    """When an owned child contains a file, it is returned as the reporting directory."""
+    current_user = pwd.getpwuid(os.getuid()).pw_name
+    members = {current_user}
+
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    child = parent / "child"
+    child.mkdir()
+    (child / "data.txt").write_text("content")
+    grandchild = child / "grandchild"
+    grandchild.mkdir()
+
+    result = get_group_subdirectories(str(parent), members)
+    # child has a file → it is the reporting directory
     assert str(child) in result
+    # descent stops at child
     assert str(grandchild) not in result
+
+
+# ---------------------------------------------------------------------------
+# _find_reporting_directories
+# ---------------------------------------------------------------------------
+
+
+def test_find_reporting_directories_with_file(tmp_path):
+    """A directory containing a file is returned as-is."""
+    d = tmp_path / "dir"
+    d.mkdir()
+    (d / "file.txt").write_text("hello")
+
+    result = _find_reporting_directories(str(d))
+    assert result == [str(d)]
+
+
+def test_find_reporting_directories_empty_dir(tmp_path):
+    """An empty directory (no files, no subdirs) is returned as a reporting directory."""
+    d = tmp_path / "empty"
+    d.mkdir()
+
+    result = _find_reporting_directories(str(d))
+    assert result == [str(d)]
+
+
+def test_find_reporting_directories_descends_through_dir_only(tmp_path):
+    """A directory with only subdirs is not returned; descent continues."""
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    child = parent / "child"
+    child.mkdir()
+    (child / "data.txt").write_text("data")
+
+    result = _find_reporting_directories(str(parent))
+    assert str(parent) not in result
+    assert str(child) in result
+
+
+def test_find_reporting_directories_multi_level_descent(tmp_path):
+    """Descent continues through multiple levels of dir-only directories."""
+    a = tmp_path / "a"
+    a.mkdir()
+    b = a / "b"
+    b.mkdir()
+    c = b / "c"
+    c.mkdir()
+    (c / "file.txt").write_text("x")
+
+    result = _find_reporting_directories(str(a))
+    assert result == [str(c)]
+
+
+def test_find_reporting_directories_multiple_subdirs(tmp_path):
+    """Each subdirectory branch is reported independently."""
+    root = tmp_path / "root"
+    root.mkdir()
+    branch1 = root / "branch1"
+    branch1.mkdir()
+    (branch1 / "f.txt").write_text("a")
+    branch2 = root / "branch2"
+    branch2.mkdir()
+    leaf = branch2 / "leaf"
+    leaf.mkdir()
+    (leaf / "g.txt").write_text("b")
+
+    result = _find_reporting_directories(str(root))
+    assert str(branch1) in result
+    assert str(leaf) in result
+    assert str(branch2) not in result
 
 
 # ---------------------------------------------------------------------------
