@@ -4,9 +4,14 @@
 Two operating modes are supported:
 
 * **Group mode** (``--group`` supplied or ``group:`` set in the config file):
-  For each configured directory, the script finds first-level subdirectories
-  owned by users who belong to the specified Unix group and reports stats
-  for each of those subdirectories.
+  For each configured directory, the script finds subdirectories owned by
+  users who belong to the specified Unix group and reports stats for each of
+  those subdirectories.  Only the immediate children are checked for
+  ownership; once an owned subdirectory is identified, the script descends
+  further into it until it reaches a directory that contains at least one
+  file (the *reporting directory*).  A directory that contains only other
+  directories (no files) is traversed further; an empty directory is used
+  as-is.
 
 * **Default mode** (no group specified):
   Stats are reported directly for each configured directory.
@@ -88,24 +93,66 @@ def get_group_members(group_name: str) -> set[str]:
     return members
 
 
-def get_group_subdirectories(parent_dir: str, group_members: set[str]) -> list[str]:
-    """Return first-level subdirectories of *parent_dir* owned by any user in *group_members*.
+def _find_reporting_directories(directory: str) -> list[str]:
+    """Return reporting directories within *directory*.
 
-    Only the immediate children of *parent_dir* are inspected; the tree is not
-    traversed further.  Entries that cannot be stat'd are silently skipped.
+    A directory is a *reporting directory* if it contains at least one file.
+    If *directory* contains only subdirectories (no files at all), recurse
+    into each subdirectory and apply the same rule.  An empty directory (no
+    files, no subdirectories) is itself treated as a reporting directory.
+    Entries that cannot be stat'd are silently skipped.
     """
-    subdirs: list[str] = []
     try:
-        entries = sorted(os.scandir(parent_dir), key=lambda e: e.name)
+        entries = sorted(os.scandir(directory), key=lambda e: e.name)
     except OSError:
-        return subdirs
+        return []
+
+    subdirs: list[str] = []
+    has_file = False
     for entry in entries:
         try:
-            if entry.is_dir(follow_symlinks=False) and get_username(entry.path) in group_members:
+            if entry.is_file():
+                has_file = True
+            elif entry.is_dir(follow_symlinks=False):
                 subdirs.append(entry.path)
         except OSError:
             pass
-    return subdirs
+
+    if has_file or not subdirs:
+        # Contains at least one file, or is empty → this is the reporting directory.
+        return [directory]
+
+    # Only subdirectories found → recurse into each one.
+    result: list[str] = []
+    for subdir in subdirs:
+        result.extend(_find_reporting_directories(subdir))
+    # Fall back to the current directory if all recursive calls returned nothing
+    # (e.g. every subdirectory raised OSError and could not be scanned).
+    return result if result else [directory]
+
+
+def get_group_subdirectories(parent_dir: str, group_members: set[str]) -> list[str]:
+    """Return reporting subdirectories of *parent_dir* owned by any user in *group_members*.
+
+    Only the immediate children of *parent_dir* are checked for ownership.
+    For each owned subdirectory, if it contains at least one file it is
+    returned directly as a reporting directory.  If it contains only
+    subdirectories (no files), the search recurses further until a directory
+    with files or an empty leaf directory is reached.  Entries that cannot
+    be stat'd are silently skipped.
+    """
+    result: list[str] = []
+    try:
+        entries = sorted(os.scandir(parent_dir), key=lambda e: e.name)
+    except OSError:
+        return result
+    for entry in entries:
+        try:
+            if entry.is_dir(follow_symlinks=False) and get_username(entry.path) in group_members:
+                result.extend(_find_reporting_directories(entry.path))
+        except OSError:
+            pass
+    return result
 
 
 def get_directory_stats(path: str, group: str | None = None, show_progress: bool = False) -> dict:
@@ -282,8 +329,10 @@ if __name__ == "__main__":
         "--group",
         default=None,
         help=(
-            "For each configured directory, report only first-level subdirectories "
-            "owned by users belonging to this Unix group."
+            "For each configured directory, report subdirectories owned by users "
+            "belonging to this Unix group.  Descent continues into directories that "
+            "contain only subdirectories; a directory with at least one file is used "
+            "as the reporting directory."
         ),
     )
     parser.add_argument(
