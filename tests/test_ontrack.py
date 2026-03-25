@@ -555,6 +555,43 @@ def test_find_reporting_directories_multiple_subdirs(tmp_path):
     assert str(branch2) not in result
 
 
+def test_find_reporting_directories_files_and_subdir(tmp_path):
+    """A directory with both files and subdirectories is reported as-is.
+
+    Structure:
+        dir0/
+          dir01/
+            file010.txt
+            file011.txt
+            dir012/           <- empty, should NOT be reported
+          dir02/
+            dir020/
+              file0201.txt
+
+    Expected: dir01 and dir020 are reported; dir0, dir02, and dir012 are not.
+    """
+    dir0 = tmp_path / "dir0"
+    dir01 = dir0 / "dir01"
+    dir012 = dir01 / "dir012"
+    dir02 = dir0 / "dir02"
+    dir020 = dir02 / "dir020"
+
+    for d in (dir012, dir020):
+        d.mkdir(parents=True)
+
+    (dir01 / "file010.txt").write_text("a")
+    (dir01 / "file011.txt").write_text("b")
+    (dir020 / "file0201.txt").write_text("c")
+
+    result = _find_reporting_directories(str(dir0))
+
+    assert str(dir01) in result
+    assert str(dir020) in result
+    assert str(dir0) not in result
+    assert str(dir02) not in result
+    assert str(dir012) not in result
+
+
 # ---------------------------------------------------------------------------
 # main – group from config file
 # ---------------------------------------------------------------------------
