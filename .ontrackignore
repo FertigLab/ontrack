@@ -1,7 +1,0 @@
-# ontrackignore — patterns listed here are excluded from all scans.
-# Syntax mirrors .gitignore: blank lines and lines starting with '#' are
-# ignored; each other line is a shell-style glob pattern matched against the
-# base name of files and directories.
-
-# Ignore hidden files and directories (names starting with a dot).
-.*

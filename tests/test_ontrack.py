@@ -25,7 +25,6 @@ from ontrack import (
     get_group_subdirectories,
     get_username,
     load_config,
-    load_ignore_patterns,
     main,
     report_directory,
 )
@@ -936,40 +935,6 @@ def test_build_directory_entry_with_group(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# load_ignore_patterns
-# ---------------------------------------------------------------------------
-
-
-def test_load_ignore_patterns_reads_file(tmp_path):
-    """load_ignore_patterns returns patterns from a valid file."""
-    ignore_file = tmp_path / ".ontrackignore"
-    ignore_file.write_text(".*\n*.tmp\n")
-    result = load_ignore_patterns(str(ignore_file))
-    assert result == [".*", "*.tmp"]
-
-
-def test_load_ignore_patterns_skips_comments_and_blanks(tmp_path):
-    """load_ignore_patterns ignores comment lines (starting with #) and blank lines."""
-    ignore_file = tmp_path / ".ontrackignore"
-    ignore_file.write_text("# this is a comment\n\n.*\n\n# another comment\n*.bak\n")
-    result = load_ignore_patterns(str(ignore_file))
-    assert result == [".*", "*.bak"]
-
-
-def test_load_ignore_patterns_missing_file():
-    """load_ignore_patterns returns an empty list when the file does not exist."""
-    result = load_ignore_patterns("/nonexistent/path/.ontrackignore")
-    assert result == []
-
-
-def test_load_ignore_patterns_default_path_missing(monkeypatch, tmp_path):
-    """load_ignore_patterns returns [] when the default .ontrackignore is absent."""
-    monkeypatch.chdir(tmp_path)
-    result = load_ignore_patterns()
-    assert result == []
-
-
-# ---------------------------------------------------------------------------
 # _is_ignored
 # ---------------------------------------------------------------------------
 
@@ -1116,23 +1081,19 @@ def test_get_directory_stats_no_patterns_counts_all(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# main – ignore_file integration
+# main – ignore patterns from config
 # ---------------------------------------------------------------------------
 
 
-def test_main_loads_ignore_file(tmp_path, capsys):
-    """main applies ignore patterns from the ignore file next to the config."""
+def test_main_config_ignore_excludes_hidden_files(tmp_path, capsys):
+    """main applies ignore patterns from the config's ignore key."""
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     (data_dir / "visible.txt").write_text("hello")
     (data_dir / ".hidden").write_text("secret")
 
     config_file = tmp_path / "config.yaml"
-    config_file.write_text(f"directories:\n  - {data_dir}\n")
-
-    # Create .ontrackignore next to config that ignores hidden files.
-    ignore_file = tmp_path / ".ontrackignore"
-    ignore_file.write_text(".*\n")
+    config_file.write_text(f"directories:\n  - {data_dir}\nignore:\n  - '.*'\n")
 
     main(str(config_file))
     captured = capsys.readouterr()
@@ -1140,8 +1101,8 @@ def test_main_loads_ignore_file(tmp_path, capsys):
     assert "Files     : 1" in captured.out
 
 
-def test_main_ignore_file_excludes_dirs(tmp_path, capsys):
-    """main does not descend into directories matching the ignore patterns."""
+def test_main_config_ignore_excludes_dirs(tmp_path, capsys):
+    """main does not descend into directories matching the config ignore patterns."""
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     ignored = data_dir / ".git"
@@ -1150,10 +1111,7 @@ def test_main_ignore_file_excludes_dirs(tmp_path, capsys):
     (data_dir / "readme.txt").write_text("hi")
 
     config_file = tmp_path / "config.yaml"
-    config_file.write_text(f"directories:\n  - {data_dir}\n")
-
-    ignore_file = tmp_path / ".ontrackignore"
-    ignore_file.write_text(".*\n")
+    config_file.write_text(f"directories:\n  - {data_dir}\nignore:\n  - '.*'\n")
 
     main(str(config_file))
     captured = capsys.readouterr()
@@ -1161,28 +1119,24 @@ def test_main_ignore_file_excludes_dirs(tmp_path, capsys):
     assert "Files     : 1" in captured.out
 
 
-def test_main_explicit_ignore_file_arg(tmp_path, capsys):
-    """main uses the ignore file path supplied via ignore_file argument."""
+def test_main_config_ignore_wildcard_extension(tmp_path, capsys):
+    """main excludes files matching a wildcard extension pattern in config ignore."""
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     (data_dir / "visible.txt").write_text("hello")
     (data_dir / "unwanted.tmp").write_text("junk")
 
     config_file = tmp_path / "config.yaml"
-    config_file.write_text(f"directories:\n  - {data_dir}\n")
+    config_file.write_text(f"directories:\n  - {data_dir}\nignore:\n  - '*.tmp'\n")
 
-    # Custom ignore file in a different location.
-    ignore_file = tmp_path / "custom.ignore"
-    ignore_file.write_text("*.tmp\n")
-
-    main(str(config_file), ignore_file=str(ignore_file))
+    main(str(config_file))
     captured = capsys.readouterr()
     # Only visible.txt should be counted.
     assert "Files     : 1" in captured.out
 
 
-def test_main_no_ignore_file_counts_hidden(tmp_path, capsys):
-    """Without an ignore file, hidden files are counted in stats."""
+def test_main_no_ignore_key_counts_all_files(tmp_path, capsys):
+    """Without an ignore key in config, all files (including hidden) are counted."""
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     (data_dir / "visible.txt").write_text("hello")
@@ -1191,7 +1145,6 @@ def test_main_no_ignore_file_counts_hidden(tmp_path, capsys):
     config_file = tmp_path / "config.yaml"
     config_file.write_text(f"directories:\n  - {data_dir}\n")
 
-    # No .ontrackignore next to config → hidden files included.
     main(str(config_file))
     captured = capsys.readouterr()
     assert "Files     : 2" in captured.out

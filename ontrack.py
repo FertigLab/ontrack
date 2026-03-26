@@ -9,9 +9,10 @@ Two operating modes are supported:
   those subdirectories.  Only the immediate children are checked for
   ownership; once an owned subdirectory is identified, the script descends
   further into it until it reaches a directory that contains at least one
-  visible file (a file whose name does not start with ``.``), which is the
-  *reporting directory*.  A directory that contains only hidden files or only
-  subdirectories is traversed further; an empty directory is used as-is.
+  visible file (a file whose name is not matched by any ``ignore`` pattern),
+  which is the *reporting directory*.  A directory that contains only ignored
+  files or only subdirectories is traversed further; an empty directory is
+  used as-is.
 
 * **Default mode** (no group specified):
   Stats are reported directly for each configured directory.
@@ -30,6 +31,16 @@ Optional flags
     Skip file-count and size scanning; only report directory and owner.
 ``--output <file>``
     Write the report as YAML to *file*; otherwise print to stdout.
+
+Config file keys
+----------------
+``ignore``
+    A YAML list of shell-style glob patterns.  Files and directories whose
+    base names match any pattern are excluded from all scans.  Example::
+
+        ignore:
+          - '.*'
+          - '*.tmp'
 """
 
 import argparse
@@ -344,35 +355,6 @@ def load_config(config_path: str) -> dict:
         return yaml.safe_load(fh)
 
 
-def load_ignore_patterns(ignore_file: str | None = None) -> list[str]:
-    """Load and return glob patterns from an ignore file (default: .ontrackignore).
-
-    The file format mirrors ``.gitignore``: blank lines and lines whose first
-    non-whitespace character is ``#`` are treated as comments and are skipped.
-    Each remaining line is trimmed of leading/trailing whitespace and added to
-    the returned list.  Returns an empty list when the file cannot be read.
-
-    Args:
-        ignore_file: Path to the ignore file.  If ``None``, defaults to
-            ``.ontrackignore`` in the current working directory.
-
-    Returns:
-        A list of glob pattern strings.
-    """
-    if ignore_file is None:
-        ignore_file = ".ontrackignore"
-    try:
-        lines = pathlib.Path(ignore_file).read_text().splitlines()
-    except OSError:
-        return []
-    patterns: list[str] = []
-    for line in lines:
-        line = line.strip()
-        if line and not line.startswith("#"):
-            patterns.append(line)
-    return patterns
-
-
 def _is_ignored(name: str, patterns: list[str]) -> bool:
     """Return ``True`` if *name* matches any of the given shell-style patterns.
 
@@ -395,7 +377,6 @@ def main(
     light: bool = False,
     progress: bool = False,
     output: str | None = None,
-    ignore_file: str | None = None,
 ) -> None:
     """Run ontrack with the given options.
 
@@ -405,9 +386,6 @@ def main(
         light: When ``True``, skip file-count and size scanning.
         progress: Display tqdm progress bars while scanning.
         output: Write YAML report to this path instead of printing to stdout.
-        ignore_file: Path to the ignore-patterns file.  Defaults to a file
-            named ``.ontrackignore`` located in the same directory as
-            *config_path*.  If the file does not exist, no patterns are loaded.
     """
     config = load_config(config_path)
     directories = config.get("directories", [])
@@ -420,13 +398,10 @@ def main(
         print("No directories specified in configuration.", file=sys.stderr)
         sys.exit(1)
 
-    # Load ignore patterns from the ignore file next to the config, unless an
-    # explicit path was supplied.
-    if ignore_file is None:
-        ignore_file = str(pathlib.Path(config_path).parent / ".ontrackignore")
-    ignore_patterns = load_ignore_patterns(ignore_file)
+    # Read ignore patterns from the config file.
+    ignore_patterns: list[str] = config.get("ignore", [])
     if ignore_patterns:
-        logger.info("Ignore patterns loaded from %s: %s", ignore_file, ignore_patterns)
+        logger.info("Ignore patterns: %s", ignore_patterns)
 
     logger.info("Directories supplied: %s", directories)
 
@@ -518,16 +493,6 @@ if __name__ == "__main__":
         metavar="FILE",
         help="Write the report as YAML to FILE instead of printing to stdout.",
     )
-    parser.add_argument(
-        "--ignore-file",
-        default=None,
-        metavar="FILE",
-        help=(
-            "Path to an ignore file (default: .ontrackignore next to the config file). "
-            "Each non-blank, non-comment line is treated as a shell-style glob pattern; "
-            "matching files and directories are excluded from the scan."
-        ),
-    )
     args = parser.parse_args()
     main(
         args.config,
@@ -535,5 +500,4 @@ if __name__ == "__main__":
         light=args.light,
         progress=args.progress,
         output=args.output,
-        ignore_file=args.ignore_file,
     )
