@@ -9,9 +9,9 @@ Two operating modes are supported:
   those subdirectories.  Only the immediate children are checked for
   ownership; once an owned subdirectory is identified, the script descends
   further into it until it reaches a directory that contains at least one
-  file (the *reporting directory*).  A directory that contains only other
-  directories (no files) is traversed further; an empty directory is used
-  as-is.
+  visible file (a file whose name does not start with ``.``), which is the
+  *reporting directory*.  A directory that contains only hidden files or only
+  subdirectories is traversed further; an empty directory is used as-is.
 
 * **Default mode** (no group specified):
   Stats are reported directly for each configured directory.
@@ -96,11 +96,12 @@ def get_group_members(group_name: str) -> set[str]:
 def _find_reporting_directories(directory: str) -> list[str]:
     """Return reporting directories within *directory*.
 
-    A directory is a *reporting directory* if it contains at least one file.
-    If *directory* contains only subdirectories (no files at all), recurse
-    into each subdirectory and apply the same rule.  An empty directory (no
-    files, no subdirectories) is itself treated as a reporting directory.
-    Entries that cannot be stat'd are silently skipped.
+    A directory is a *reporting directory* if it contains at least one visible
+    file (a file whose name does not start with ``.``).  If *directory*
+    contains only hidden files (dot-files) and subdirectories, or contains no
+    files at all, the search recurses into each subdirectory.  An empty
+    directory (no files, no subdirectories) is itself treated as a reporting
+    directory.  Entries that cannot be stat'd are silently skipped.
     """
     try:
         entries = sorted(os.scandir(directory), key=lambda e: e.name)
@@ -108,21 +109,23 @@ def _find_reporting_directories(directory: str) -> list[str]:
         return []
 
     subdirs: list[str] = []
-    has_file = False
+    has_visible_file = False
     for entry in entries:
         try:
-            if entry.is_file():
-                has_file = True
+            if entry.is_file() and not entry.name.startswith("."):
+                has_visible_file = True
+                break  # no need to scan further; this dir is already a reporting dir
             elif entry.is_dir(follow_symlinks=False):
                 subdirs.append(entry.path)
         except OSError:
             pass
 
-    if has_file or not subdirs:
-        # Contains at least one file, or is empty → this is the reporting directory.
+    if has_visible_file or not subdirs:
+        # Contains at least one visible file, or is an empty/dot-files-only
+        # leaf → this is the reporting directory.
         return [directory]
 
-    # Only subdirectories found → recurse into each one.
+    # Only subdirectories (and possibly hidden files) found → recurse.
     result: list[str] = []
     for subdir in subdirs:
         result.extend(_find_reporting_directories(subdir))
@@ -135,11 +138,12 @@ def get_group_subdirectories(parent_dir: str, group_members: set[str]) -> list[s
     """Return reporting subdirectories of *parent_dir* owned by any user in *group_members*.
 
     Only the immediate children of *parent_dir* are checked for ownership.
-    For each owned subdirectory, if it contains at least one file it is
-    returned directly as a reporting directory.  If it contains only
-    subdirectories (no files), the search recurses further until a directory
-    with files or an empty leaf directory is reached.  Entries that cannot
-    be stat'd are silently skipped.
+    For each owned subdirectory, if it contains at least one visible file (a
+    file whose name does not start with ``"."``) it is returned directly as a
+    reporting directory.  If it contains only hidden files or only
+    subdirectories (no visible files), the search recurses further until a
+    directory with visible files or an empty leaf directory is reached.
+    Entries that cannot be stat'd are silently skipped.
     """
     result: list[str] = []
     try:
