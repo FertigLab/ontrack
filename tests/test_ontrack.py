@@ -465,8 +465,28 @@ def test_get_group_subdirectories_descends_past_empty_intermediate_dir(tmp_path)
     assert str(grandchild) in result
 
 
-def test_get_group_subdirectories_descends_through_owned_child_with_file_and_subdirs(tmp_path):
-    """When an owned child has both files and subdirs, descent continues into the subdirs."""
+def test_get_group_subdirectories_descends_through_owned_child_with_dotfile_and_subdirs(tmp_path):
+    """When an owned child has only a hidden (dot) file and subdirs, descent continues into the subdirs."""
+    current_user = pwd.getpwuid(os.getuid()).pw_name
+    members = {current_user}
+
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    child = parent / "child"
+    child.mkdir()
+    (child / ".hidden").write_text("hidden")
+    grandchild = child / "grandchild"
+    grandchild.mkdir()
+
+    result = get_group_subdirectories(str(parent), members)
+    # grandchild is the leaf (no subdirs) → it is the reporting directory
+    assert str(grandchild) in result
+    # child has no visible files → it is not the reporting directory
+    assert str(child) not in result
+
+
+def test_get_group_subdirectories_stops_at_owned_child_with_visible_file(tmp_path):
+    """When an owned child contains a visible file, it is returned as the reporting directory."""
     current_user = pwd.getpwuid(os.getuid()).pw_name
     members = {current_user}
 
@@ -479,19 +499,20 @@ def test_get_group_subdirectories_descends_through_owned_child_with_file_and_sub
     grandchild.mkdir()
 
     result = get_group_subdirectories(str(parent), members)
-    # grandchild is the leaf (no subdirs) → it is the reporting directory
-    assert str(grandchild) in result
-    # child has subdirs so it is not itself a reporting directory
-    assert str(child) not in result
+    # child has a visible file → it is the reporting directory
+    assert str(child) in result
+    # descent stops at child
+    assert str(grandchild) not in result
 
 
 def test_get_group_subdirectories_reports_project_subdirs_not_owned_dir(tmp_path):
-    """Project subdirs of an owned dir are reported even when owned dir has a top-level file.
+    """Project subdirs of an owned dir are reported when the owned dir has only a dotfile.
 
-    This is the primary bug scenario: an owned directory that contains a
-    miscellaneous top-level file (e.g. a README) alongside project
-    subdirectories should report the project subdirectories, not the owned
-    directory itself.
+    This is the primary bug scenario: an owned directory that contains only a
+    hidden dot-file (e.g. ``.gitconfig``) alongside project subdirectories
+    should report the project subdirectories, not the owned directory itself.
+    A hidden dot-file is not treated as a visible file and therefore does not
+    halt descent.
     """
     current_user = pwd.getpwuid(os.getuid()).pw_name
     members = {current_user}
@@ -500,7 +521,7 @@ def test_get_group_subdirectories_reports_project_subdirs_not_owned_dir(tmp_path
     parent.mkdir()
     owned = parent / "owned"
     owned.mkdir()
-    (owned / "README.md").write_text("readme")
+    (owned / ".gitconfig").write_text("hidden config")
     project1 = owned / "project1"
     project1.mkdir()
     (project1 / "data.csv").write_text("data")
@@ -520,13 +541,36 @@ def test_get_group_subdirectories_reports_project_subdirs_not_owned_dir(tmp_path
 
 
 def test_find_reporting_directories_with_file(tmp_path):
-    """A directory containing a file but no subdirs is returned as-is (leaf)."""
+    """A directory containing a visible file but no subdirs is returned as-is (leaf)."""
     d = tmp_path / "dir"
     d.mkdir()
     (d / "file.txt").write_text("hello")
 
     result = _find_reporting_directories(str(d))
     assert result == [str(d)]
+
+
+def test_find_reporting_directories_with_only_dotfile_no_subdirs(tmp_path):
+    """A directory containing only a hidden dot-file and no subdirs is returned as-is."""
+    d = tmp_path / "dir"
+    d.mkdir()
+    (d / ".hidden").write_text("hidden")
+
+    result = _find_reporting_directories(str(d))
+    assert result == [str(d)]
+
+
+def test_find_reporting_directories_visible_file_stops_descent(tmp_path):
+    """A visible file in a directory stops descent even when subdirectories also exist."""
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    (parent / "visible.txt").write_text("visible")
+    child = parent / "child"
+    child.mkdir()
+
+    result = _find_reporting_directories(str(parent))
+    assert str(parent) in result
+    assert str(child) not in result
 
 
 def test_find_reporting_directories_empty_dir(tmp_path):
@@ -584,27 +628,27 @@ def test_find_reporting_directories_multiple_subdirs(tmp_path):
     assert str(branch2) not in result
 
 
-def test_find_reporting_directories_top_level_file_does_not_stop_descent(tmp_path):
-    """A top-level file in a directory does not stop descent into its subdirectories.
+def test_find_reporting_directories_with_dotfile_and_subdirs(tmp_path):
+    """A hidden dot-file in a directory does not stop descent into its subdirectories.
 
     Structure:
         owned/
-          readme.txt     <- file directly in owned dir
+          .hidden_file     <- dot-file (hidden) directly in owned dir
           project1/
-            data.csv     <- leaf with files
+            data.csv       <- leaf with files
           project2/
-            results.txt  <- leaf with files
+            results.txt    <- leaf with files
 
     Expected: project1 and project2 are reported; owned is not.
-    This is the core bug scenario: owned should NOT be reported just because
-    it happens to contain a top-level file alongside its subdirectories.
+    A hidden file is not treated as a visible file and therefore does not
+    halt the descent into subdirectories.
     """
     owned = tmp_path / "owned"
     project1 = owned / "project1"
     project2 = owned / "project2"
     for d in (project1, project2):
         d.mkdir(parents=True)
-    (owned / "readme.txt").write_text("readme")
+    (owned / ".hidden_file").write_text("hidden")
     (project1 / "data.csv").write_text("data")
     (project2 / "results.txt").write_text("results")
 
@@ -616,20 +660,19 @@ def test_find_reporting_directories_top_level_file_does_not_stop_descent(tmp_pat
 
 
 def test_find_reporting_directories_files_and_subdir(tmp_path):
-    """A directory with both files and subdirectories is not reported as-is; descent continues.
+    """A directory with visible files is a reporting directory even if it has subdirectories.
 
     Structure:
         dir0/
           dir01/
             file010.txt
             file011.txt
-            dir012/           <- empty leaf, IS reported (leaf)
+            dir012/           <- NOT reported (dir01 has visible files, stops here)
           dir02/
             dir020/
               file0201.txt    <- leaf, IS reported
 
-    Expected: dir012 and dir020 are reported; dir0, dir01, and dir02 are not.
-    Descent always continues into subdirs even when the parent holds files directly.
+    Expected: dir01 and dir020 are reported; dir0, dir02, and dir012 are not.
     """
     dir0 = tmp_path / "dir0"
     dir01 = dir0 / "dir01"
@@ -646,11 +689,11 @@ def test_find_reporting_directories_files_and_subdir(tmp_path):
 
     result = _find_reporting_directories(str(dir0))
 
-    assert str(dir012) in result
+    assert str(dir01) in result
     assert str(dir020) in result
     assert str(dir0) not in result
-    assert str(dir01) not in result
     assert str(dir02) not in result
+    assert str(dir012) not in result
 
 
 # ---------------------------------------------------------------------------
