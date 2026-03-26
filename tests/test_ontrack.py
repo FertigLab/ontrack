@@ -465,8 +465,8 @@ def test_get_group_subdirectories_descends_past_empty_intermediate_dir(tmp_path)
     assert str(grandchild) in result
 
 
-def test_get_group_subdirectories_stops_at_child_with_file(tmp_path):
-    """When an owned child contains a file, it is returned as the reporting directory."""
+def test_get_group_subdirectories_descends_through_owned_child_with_file_and_subdirs(tmp_path):
+    """When an owned child has both files and subdirs, descent continues into the subdirs."""
     current_user = pwd.getpwuid(os.getuid()).pw_name
     members = {current_user}
 
@@ -479,10 +479,39 @@ def test_get_group_subdirectories_stops_at_child_with_file(tmp_path):
     grandchild.mkdir()
 
     result = get_group_subdirectories(str(parent), members)
-    # child has a file → it is the reporting directory
-    assert str(child) in result
-    # descent stops at child
-    assert str(grandchild) not in result
+    # grandchild is the leaf (no subdirs) → it is the reporting directory
+    assert str(grandchild) in result
+    # child has subdirs so it is not itself a reporting directory
+    assert str(child) not in result
+
+
+def test_get_group_subdirectories_reports_project_subdirs_not_owned_dir(tmp_path):
+    """Project subdirs of an owned dir are reported even when owned dir has a top-level file.
+
+    This is the primary bug scenario: an owned directory that contains a
+    miscellaneous top-level file (e.g. a README) alongside project
+    subdirectories should report the project subdirectories, not the owned
+    directory itself.
+    """
+    current_user = pwd.getpwuid(os.getuid()).pw_name
+    members = {current_user}
+
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    owned = parent / "owned"
+    owned.mkdir()
+    (owned / "README.md").write_text("readme")
+    project1 = owned / "project1"
+    project1.mkdir()
+    (project1 / "data.csv").write_text("data")
+    project2 = owned / "project2"
+    project2.mkdir()
+    (project2 / "results.txt").write_text("results")
+
+    result = get_group_subdirectories(str(parent), members)
+    assert str(project1) in result
+    assert str(project2) in result
+    assert str(owned) not in result
 
 
 # ---------------------------------------------------------------------------
@@ -491,7 +520,7 @@ def test_get_group_subdirectories_stops_at_child_with_file(tmp_path):
 
 
 def test_find_reporting_directories_with_file(tmp_path):
-    """A directory containing a file is returned as-is."""
+    """A directory containing a file but no subdirs is returned as-is (leaf)."""
     d = tmp_path / "dir"
     d.mkdir()
     (d / "file.txt").write_text("hello")
@@ -555,20 +584,52 @@ def test_find_reporting_directories_multiple_subdirs(tmp_path):
     assert str(branch2) not in result
 
 
+def test_find_reporting_directories_top_level_file_does_not_stop_descent(tmp_path):
+    """A top-level file in a directory does not stop descent into its subdirectories.
+
+    Structure:
+        owned/
+          readme.txt     <- file directly in owned dir
+          project1/
+            data.csv     <- leaf with files
+          project2/
+            results.txt  <- leaf with files
+
+    Expected: project1 and project2 are reported; owned is not.
+    This is the core bug scenario: owned should NOT be reported just because
+    it happens to contain a top-level file alongside its subdirectories.
+    """
+    owned = tmp_path / "owned"
+    project1 = owned / "project1"
+    project2 = owned / "project2"
+    for d in (project1, project2):
+        d.mkdir(parents=True)
+    (owned / "readme.txt").write_text("readme")
+    (project1 / "data.csv").write_text("data")
+    (project2 / "results.txt").write_text("results")
+
+    result = _find_reporting_directories(str(owned))
+
+    assert str(project1) in result
+    assert str(project2) in result
+    assert str(owned) not in result
+
+
 def test_find_reporting_directories_files_and_subdir(tmp_path):
-    """A directory with both files and subdirectories is reported as-is.
+    """A directory with both files and subdirectories is not reported as-is; descent continues.
 
     Structure:
         dir0/
           dir01/
             file010.txt
             file011.txt
-            dir012/           <- empty, should NOT be reported
+            dir012/           <- empty leaf, IS reported (leaf)
           dir02/
             dir020/
-              file0201.txt
+              file0201.txt    <- leaf, IS reported
 
-    Expected: dir01 and dir020 are reported; dir0, dir02, and dir012 are not.
+    Expected: dir012 and dir020 are reported; dir0, dir01, and dir02 are not.
+    Descent always continues into subdirs even when the parent holds files directly.
     """
     dir0 = tmp_path / "dir0"
     dir01 = dir0 / "dir01"
@@ -585,11 +646,11 @@ def test_find_reporting_directories_files_and_subdir(tmp_path):
 
     result = _find_reporting_directories(str(dir0))
 
-    assert str(dir01) in result
+    assert str(dir012) in result
     assert str(dir020) in result
     assert str(dir0) not in result
+    assert str(dir01) not in result
     assert str(dir02) not in result
-    assert str(dir012) not in result
 
 
 # ---------------------------------------------------------------------------
