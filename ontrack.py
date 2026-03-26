@@ -33,6 +33,7 @@ Optional flags
 """
 
 import argparse
+import fnmatch
 import functools
 import grp
 import logging
@@ -93,16 +94,27 @@ def get_group_members(group_name: str) -> set[str]:
     return members
 
 
-def _find_reporting_directories(directory: str) -> list[str]:
+def _find_reporting_directories(
+    directory: str, ignore_patterns: list[str] | None = None
+) -> list[str]:
     """Return reporting directories within *directory*.
 
     A directory is a *reporting directory* if it contains at least one visible
-    file (a file whose name does not start with ``.``).  If *directory*
-    contains only hidden files (dot-files) and subdirectories, or contains no
-    files at all, the search recurses into each subdirectory.  An empty
-    directory (no files, no subdirectories) is itself treated as a reporting
-    directory.  Entries that cannot be stat'd are silently skipped.
+    file — a file whose name is not matched by any pattern in *ignore_patterns*.
+    If *directory* contains only ignored files and subdirectories, or contains
+    no files at all, the search recurses into each non-ignored subdirectory.  An
+    empty directory (no files, no subdirectories) is itself treated as a
+    reporting directory.  Entries that cannot be stat'd are silently skipped.
+    Subdirectories whose names match *ignore_patterns* are not descended into
+    and are not considered reporting directories.
+
+    Args:
+        directory: Path to the directory to inspect.
+        ignore_patterns: A list of shell-style glob patterns (see
+            :func:`_is_ignored`).  Files and directories whose base names match
+            any pattern are ignored.  ``None`` is treated as an empty list.
     """
+    patterns: list[str] = ignore_patterns or []
     try:
         entries = sorted(os.scandir(directory), key=lambda e: e.name)
     except OSError:
@@ -112,11 +124,13 @@ def _find_reporting_directories(directory: str) -> list[str]:
     has_visible_file = False
     for entry in entries:
         try:
-            if entry.is_file() and not entry.name.startswith("."):
-                has_visible_file = True
-                break  # no need to scan further; this dir is already a reporting dir
+            if entry.is_file():
+                if not _is_ignored(entry.name, patterns):
+                    has_visible_file = True
+                    break  # no need to scan further; this dir is already a reporting dir
             elif entry.is_dir(follow_symlinks=False):
-                subdirs.append(entry.path)
+                if not _is_ignored(entry.name, patterns):
+                    subdirs.append(entry.path)
         except OSError:
             pass
 
@@ -128,23 +142,38 @@ def _find_reporting_directories(directory: str) -> list[str]:
     # Only subdirectories (and possibly hidden files) found → recurse.
     result: list[str] = []
     for subdir in subdirs:
-        result.extend(_find_reporting_directories(subdir))
+        result.extend(_find_reporting_directories(subdir, patterns))
     # Fall back to the current directory if all recursive calls returned nothing
     # (e.g. every subdirectory raised OSError and could not be scanned).
     return result if result else [directory]
 
 
-def get_group_subdirectories(parent_dir: str, group_members: set[str]) -> list[str]:
+def get_group_subdirectories(
+    parent_dir: str,
+    group_members: set[str],
+    ignore_patterns: list[str] | None = None,
+) -> list[str]:
     """Return reporting subdirectories of *parent_dir* owned by any user in *group_members*.
 
     Only the immediate children of *parent_dir* are checked for ownership.
     For each owned subdirectory, if it contains at least one visible file (a
-    file whose name does not start with ``"."``) it is returned directly as a
-    reporting directory.  If it contains only hidden files or only
+    file whose name is not matched by *ignore_patterns*) it is returned directly
+    as a reporting directory.  If it contains only ignored files or only
     subdirectories (no visible files), the search recurses further until a
     directory with visible files or an empty leaf directory is reached.
+    Subdirectories whose names match *ignore_patterns* are skipped entirely.
     Entries that cannot be stat'd are silently skipped.
+
+    Args:
+        parent_dir: Path to the parent directory whose immediate children are
+            inspected.
+        group_members: Set of usernames; only subdirectories owned by a user in
+            this set are considered.
+        ignore_patterns: Shell-style glob patterns passed to :func:`_is_ignored`.
+            Subdirectories matching any pattern are skipped.  ``None`` is
+            treated as an empty list.
     """
+    patterns: list[str] = ignore_patterns or []
     result: list[str] = []
     try:
         entries = sorted(os.scandir(parent_dir), key=lambda e: e.name)
@@ -152,21 +181,42 @@ def get_group_subdirectories(parent_dir: str, group_members: set[str]) -> list[s
         return result
     for entry in entries:
         try:
-            if entry.is_dir(follow_symlinks=False) and get_username(entry.path) in group_members:
-                result.extend(_find_reporting_directories(entry.path))
+            if (
+                entry.is_dir(follow_symlinks=False)
+                and not _is_ignored(entry.name, patterns)
+                and get_username(entry.path) in group_members
+            ):
+                result.extend(_find_reporting_directories(entry.path, patterns))
         except OSError:
             pass
     return result
 
 
-def get_directory_stats(path: str, group: str | None = None, show_progress: bool = False) -> dict:
+def get_directory_stats(
+    path: str,
+    group: str | None = None,
+    show_progress: bool = False,
+    ignore_patterns: list[str] | None = None,
+) -> dict:
     """Return file count and total size (bytes) for a directory tree.
 
     If *group* is given, only files owned by users belonging to that Unix
     group are counted.  If *show_progress* is ``True`` (default: ``False``),
     a tqdm progress bar is displayed on stderr for each subdirectory visited
     during the walk; set it to ``False`` to suppress all progress output.
+    Directories and files whose base names match any pattern in
+    *ignore_patterns* are excluded from the walk and the counts respectively.
+
+    Args:
+        path: Root of the directory tree to scan.
+        group: Optional Unix group name; when supplied only files owned by
+            members of this group are included in the counts.
+        show_progress: Display a tqdm progress bar on stderr while scanning.
+        ignore_patterns: Shell-style glob patterns (see :func:`_is_ignored`).
+            Matched directories are not descended into; matched files are not
+            counted.  ``None`` is treated as an empty list.
     """
+    patterns: list[str] = ignore_patterns or []
     allowed_users: set[str] | None = None
     if group is not None:
         allowed_users = get_group_members(group)
@@ -182,9 +232,14 @@ def get_directory_stats(path: str, group: str | None = None, show_progress: bool
             file=sys.stderr,
             leave=False,
         )
-    for dirpath, _dirnames, filenames in walker:
+    for dirpath, dirnames, filenames in walker:
+        # Prune ignored subdirectories so os.walk does not descend into them.
+        if patterns:
+            dirnames[:] = [d for d in dirnames if not _is_ignored(d, patterns)]
         dir_path = pathlib.Path(dirpath)
         for filename in filenames:
+            if patterns and _is_ignored(filename, patterns):
+                continue
             filepath = dir_path / filename
             try:
                 if allowed_users is not None and filepath.owner() not in allowed_users:
@@ -211,12 +266,22 @@ def _build_directory_entry(
     group: str | None = None,
     light: bool = False,
     show_progress: bool = False,
+    ignore_patterns: list[str] | None = None,
 ) -> dict | None:
     """Collect stats for *path* and return them as a plain dict.
 
     Returns ``None`` (and prints a warning to stderr) when *path* is not a
     valid directory.  In *light* mode only the path and username are included;
     file-count and size scanning are skipped.
+
+    Args:
+        path: Directory to report on.
+        group: Optional Unix group name forwarded to :func:`get_directory_stats`.
+        light: When ``True``, skip file-count and size scanning.
+        show_progress: Forward progress display flag to :func:`get_directory_stats`.
+        ignore_patterns: Shell-style glob patterns forwarded to
+            :func:`get_directory_stats`; matched files and directories are
+            excluded from the stats.
     """
     if not pathlib.Path(path).is_dir():
         print(f"WARNING: '{path}' is not a valid directory – skipping.", file=sys.stderr)
@@ -227,7 +292,9 @@ def _build_directory_entry(
     if group is not None:
         entry["group"] = group
     if not light:
-        stats = get_directory_stats(path, group=group, show_progress=show_progress)
+        stats = get_directory_stats(
+            path, group=group, show_progress=show_progress, ignore_patterns=ignore_patterns
+        )
         entry["file_count"] = stats["file_count"]
         entry["total_size"] = stats["total_size"]
         entry["total_size_human"] = format_size(stats["total_size"])
@@ -239,9 +306,25 @@ def report_directory(
     group: str | None = None,
     light: bool = False,
     show_progress: bool = False,
+    ignore_patterns: list[str] | None = None,
 ) -> None:
-    """Print a report for a single directory."""
-    entry = _build_directory_entry(path, group=group, light=light, show_progress=show_progress)
+    """Print a report for a single directory.
+
+    Args:
+        path: Directory to report on.
+        group: Optional Unix group name.
+        light: When ``True``, skip file-count and size scanning.
+        show_progress: Display progress bars while scanning.
+        ignore_patterns: Shell-style glob patterns; matched files and
+            directories are excluded from stats.
+    """
+    entry = _build_directory_entry(
+        path,
+        group=group,
+        light=light,
+        show_progress=show_progress,
+        ignore_patterns=ignore_patterns,
+    )
     if entry is None:
         return
 
@@ -261,13 +344,71 @@ def load_config(config_path: str) -> dict:
         return yaml.safe_load(fh)
 
 
+def load_ignore_patterns(ignore_file: str | None = None) -> list[str]:
+    """Load and return glob patterns from an ignore file (default: .ontrackignore).
+
+    The file format mirrors ``.gitignore``: blank lines and lines whose first
+    non-whitespace character is ``#`` are treated as comments and are skipped.
+    Each remaining line is trimmed of leading/trailing whitespace and added to
+    the returned list.  Returns an empty list when the file cannot be read.
+
+    Args:
+        ignore_file: Path to the ignore file.  If ``None``, defaults to
+            ``.ontrackignore`` in the current working directory.
+
+    Returns:
+        A list of glob pattern strings.
+    """
+    if ignore_file is None:
+        ignore_file = ".ontrackignore"
+    try:
+        lines = pathlib.Path(ignore_file).read_text().splitlines()
+    except OSError:
+        return []
+    patterns: list[str] = []
+    for line in lines:
+        line = line.strip()
+        if line and not line.startswith("#"):
+            patterns.append(line)
+    return patterns
+
+
+def _is_ignored(name: str, patterns: list[str]) -> bool:
+    """Return ``True`` if *name* matches any of the given shell-style patterns.
+
+    Matching is performed with :func:`fnmatch.fnmatch`, which supports the
+    usual wildcards (``*``, ``?``, ``[seq]``).
+
+    Args:
+        name: The file or directory *base name* (not a full path) to test.
+        patterns: A list of glob patterns to match against.
+
+    Returns:
+        ``True`` if *name* matches at least one pattern, ``False`` otherwise.
+    """
+    return any(fnmatch.fnmatch(name, pattern) for pattern in patterns)
+
+
 def main(
     config_path: str = "config.yaml",
     group: str | None = None,
     light: bool = False,
     progress: bool = False,
     output: str | None = None,
+    ignore_file: str | None = None,
 ) -> None:
+    """Run ontrack with the given options.
+
+    Args:
+        config_path: Path to the YAML configuration file.
+        group: Unix group name; overrides the ``group`` key in the config file.
+        light: When ``True``, skip file-count and size scanning.
+        progress: Display tqdm progress bars while scanning.
+        output: Write YAML report to this path instead of printing to stdout.
+        ignore_file: Path to the ignore-patterns file.  Defaults to a file
+            named ``.ontrackignore`` located in the same directory as
+            *config_path*.  If the file does not exist, no patterns are loaded.
+    """
     config = load_config(config_path)
     directories = config.get("directories", [])
 
@@ -278,6 +419,14 @@ def main(
     if not directories:
         print("No directories specified in configuration.", file=sys.stderr)
         sys.exit(1)
+
+    # Load ignore patterns from the ignore file next to the config, unless an
+    # explicit path was supplied.
+    if ignore_file is None:
+        ignore_file = str(pathlib.Path(config_path).parent / ".ontrackignore")
+    ignore_patterns = load_ignore_patterns(ignore_file)
+    if ignore_patterns:
+        logger.info("Ignore patterns loaded from %s: %s", ignore_file, ignore_patterns)
 
     logger.info("Directories supplied: %s", directories)
 
@@ -293,7 +442,7 @@ def main(
                     file=sys.stderr,
                 )
                 continue
-            subdirs.extend(get_group_subdirectories(parent_dir, members))
+            subdirs.extend(get_group_subdirectories(parent_dir, members, ignore_patterns))
 
         paths_to_process: list[str] = subdirs
     else:
@@ -308,7 +457,13 @@ def main(
     if output is not None:
         results = []
         for path in iterator:
-            entry = _build_directory_entry(path, group=group, light=light, show_progress=progress)
+            entry = _build_directory_entry(
+                path,
+                group=group,
+                light=light,
+                show_progress=progress,
+                ignore_patterns=ignore_patterns,
+            )
             if entry is not None:
                 results.append(entry)
         with open(output, "w") as fh:
@@ -316,7 +471,13 @@ def main(
         logger.info("Report written to %s", output)
     else:
         for path in iterator:
-            report_directory(path, group=group, light=light, show_progress=progress)
+            report_directory(
+                path,
+                group=group,
+                light=light,
+                show_progress=progress,
+                ignore_patterns=ignore_patterns,
+            )
 
 
 if __name__ == "__main__":
@@ -357,5 +518,22 @@ if __name__ == "__main__":
         metavar="FILE",
         help="Write the report as YAML to FILE instead of printing to stdout.",
     )
+    parser.add_argument(
+        "--ignore-file",
+        default=None,
+        metavar="FILE",
+        help=(
+            "Path to an ignore file (default: .ontrackignore next to the config file). "
+            "Each non-blank, non-comment line is treated as a shell-style glob pattern; "
+            "matching files and directories are excluded from the scan."
+        ),
+    )
     args = parser.parse_args()
-    main(args.config, group=args.group, light=args.light, progress=args.progress, output=args.output)
+    main(
+        args.config,
+        group=args.group,
+        light=args.light,
+        progress=args.progress,
+        output=args.output,
+        ignore_file=args.ignore_file,
+    )
