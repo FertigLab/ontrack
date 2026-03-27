@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from ontrack import (
     _build_directory_entry,
     _find_reporting_directories,
+    _is_ignored,
     _uid_to_username,
     format_size,
     get_directory_stats,
@@ -478,7 +479,7 @@ def test_get_group_subdirectories_descends_through_owned_child_with_dotfile_and_
     grandchild = child / "grandchild"
     grandchild.mkdir()
 
-    result = get_group_subdirectories(str(parent), members)
+    result = get_group_subdirectories(str(parent), members, ignore_patterns=[".*"])
     # grandchild is the leaf (no subdirs) → it is the reporting directory
     assert str(grandchild) in result
     # child has no visible files → it is not the reporting directory
@@ -529,7 +530,7 @@ def test_get_group_subdirectories_reports_project_subdirs_not_owned_dir(tmp_path
     project2.mkdir()
     (project2 / "results.txt").write_text("results")
 
-    result = get_group_subdirectories(str(parent), members)
+    result = get_group_subdirectories(str(parent), members, ignore_patterns=[".*"])
     assert str(project1) in result
     assert str(project2) in result
     assert str(owned) not in result
@@ -556,7 +557,7 @@ def test_find_reporting_directories_with_only_dotfile_no_subdirs(tmp_path):
     d.mkdir()
     (d / ".hidden").write_text("hidden")
 
-    result = _find_reporting_directories(str(d))
+    result = _find_reporting_directories(str(d), ignore_patterns=[".*"])
     assert result == [str(d)]
 
 
@@ -652,7 +653,7 @@ def test_find_reporting_directories_with_dotfile_and_subdirs(tmp_path):
     (project1 / "data.csv").write_text("data")
     (project2 / "results.txt").write_text("results")
 
-    result = _find_reporting_directories(str(owned))
+    result = _find_reporting_directories(str(owned), ignore_patterns=[".*"])
 
     assert str(project1) in result
     assert str(project2) in result
@@ -931,4 +932,220 @@ def test_build_directory_entry_with_group(tmp_path):
     entry = _build_directory_entry(str(tmp_path), group=group_name)
     assert entry is not None
     assert entry["group"] == group_name
+
+
+# ---------------------------------------------------------------------------
+# _is_ignored
+# ---------------------------------------------------------------------------
+
+
+def test_is_ignored_matches_dot_star():
+    """_is_ignored returns True for names matching '.*'."""
+    assert _is_ignored(".hidden", [".*"]) is True
+    assert _is_ignored(".gitignore", [".*"]) is True
+
+
+def test_is_ignored_no_match():
+    """_is_ignored returns False when no pattern matches."""
+    assert _is_ignored("visible.txt", [".*"]) is False
+
+
+def test_is_ignored_wildcard_extension():
+    """_is_ignored matches a wildcard extension pattern."""
+    assert _is_ignored("backup.tmp", ["*.tmp"]) is True
+    assert _is_ignored("notes.txt", ["*.tmp"]) is False
+
+
+def test_is_ignored_empty_patterns():
+    """_is_ignored returns False for any name when the pattern list is empty."""
+    assert _is_ignored(".hidden", []) is False
+    assert _is_ignored("visible.txt", []) is False
+
+
+def test_is_ignored_multiple_patterns():
+    """_is_ignored returns True when any pattern matches."""
+    assert _is_ignored(".hidden", [".*", "*.tmp"]) is True
+    assert _is_ignored("file.tmp", [".*", "*.tmp"]) is True
+    assert _is_ignored("normal.txt", [".*", "*.tmp"]) is False
+
+
+# ---------------------------------------------------------------------------
+# _find_reporting_directories with ignore_patterns
+# ---------------------------------------------------------------------------
+
+
+def test_find_reporting_directories_ignores_matched_dir(tmp_path):
+    """A directory matching ignore_patterns is not descended or returned."""
+    root = tmp_path / "root"
+    root.mkdir()
+    ignored_dir = root / ".cache"
+    ignored_dir.mkdir()
+    (ignored_dir / "data.txt").write_text("should be ignored")
+    regular_dir = root / "work"
+    regular_dir.mkdir()
+    (regular_dir / "data.txt").write_text("visible")
+
+    result = _find_reporting_directories(str(root), ignore_patterns=[".*"])
+    assert str(regular_dir) in result
+    assert str(ignored_dir) not in result
+
+
+def test_find_reporting_directories_dotfile_treated_visible_without_patterns(tmp_path):
+    """Without ignore_patterns, a dot-file is treated as a visible file and stops descent."""
+    d = tmp_path / "dir"
+    d.mkdir()
+    (d / ".hidden").write_text("hidden")
+    sub = d / "sub"
+    sub.mkdir()
+    (sub / "data.txt").write_text("data")
+
+    # Without patterns: dot-file is visible → dir itself is the reporting directory.
+    result = _find_reporting_directories(str(d))
+    assert str(d) in result
+    assert str(sub) not in result
+
+
+def test_find_reporting_directories_ignores_matched_file(tmp_path):
+    """A file matching ignore_patterns is not treated as a visible file."""
+    d = tmp_path / "dir"
+    d.mkdir()
+    (d / ".hidden").write_text("ignored by pattern")
+    sub = d / "sub"
+    sub.mkdir()
+    (sub / "data.txt").write_text("data")
+
+    # With patterns: .hidden is ignored → descent into sub occurs.
+    result = _find_reporting_directories(str(d), ignore_patterns=[".*"])
+    assert str(sub) in result
+    assert str(d) not in result
+
+
+# ---------------------------------------------------------------------------
+# get_group_subdirectories with ignore_patterns
+# ---------------------------------------------------------------------------
+
+
+def test_get_group_subdirectories_skips_ignored_subdir(tmp_path):
+    """A first-level subdirectory matching ignore_patterns is not returned."""
+    current_user = pwd.getpwuid(os.getuid()).pw_name
+    members = {current_user}
+
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    hidden_sub = parent / ".hidden_sub"
+    hidden_sub.mkdir()
+    (hidden_sub / "data.txt").write_text("data")
+    visible_sub = parent / "visible_sub"
+    visible_sub.mkdir()
+    (visible_sub / "data.txt").write_text("data")
+
+    result = get_group_subdirectories(str(parent), members, ignore_patterns=[".*"])
+    assert str(visible_sub) in result
+    assert str(hidden_sub) not in result
+
+
+# ---------------------------------------------------------------------------
+# get_directory_stats with ignore_patterns
+# ---------------------------------------------------------------------------
+
+
+def test_get_directory_stats_skips_ignored_files(tmp_path):
+    """Files matching ignore_patterns are not counted in stats."""
+    (tmp_path / "visible.txt").write_text("hello")   # 5 bytes
+    (tmp_path / ".hidden").write_text("world!")      # 6 bytes – should be ignored
+
+    stats = get_directory_stats(str(tmp_path), ignore_patterns=[".*"])
+    assert stats["file_count"] == 1
+    assert stats["total_size"] == 5
+
+
+def test_get_directory_stats_skips_ignored_dirs(tmp_path):
+    """Directories matching ignore_patterns are not descended for stats."""
+    ignored_dir = tmp_path / ".cache"
+    ignored_dir.mkdir()
+    (ignored_dir / "big.dat").write_text("should not count")
+
+    (tmp_path / "visible.txt").write_text("hi")
+
+    stats = get_directory_stats(str(tmp_path), ignore_patterns=[".*"])
+    assert stats["file_count"] == 1
+
+
+def test_get_directory_stats_no_patterns_counts_all(tmp_path):
+    """Without ignore_patterns, all files (including hidden) are counted."""
+    (tmp_path / "visible.txt").write_text("hello")
+    (tmp_path / ".hidden").write_text("world!")
+
+    stats = get_directory_stats(str(tmp_path))
+    assert stats["file_count"] == 2
+
+
+# ---------------------------------------------------------------------------
+# main – ignore patterns from config
+# ---------------------------------------------------------------------------
+
+
+def test_main_config_ignore_excludes_hidden_files(tmp_path, capsys):
+    """main applies ignore patterns from the config's ignore key."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "visible.txt").write_text("hello")
+    (data_dir / ".hidden").write_text("secret")
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(f"directories:\n  - {data_dir}\nignore:\n  - '.*'\n")
+
+    main(str(config_file))
+    captured = capsys.readouterr()
+    # Only visible.txt should be counted (1 file).
+    assert "Files     : 1" in captured.out
+
+
+def test_main_config_ignore_excludes_dirs(tmp_path, capsys):
+    """main does not descend into directories matching the config ignore patterns."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    ignored = data_dir / ".git"
+    ignored.mkdir()
+    (ignored / "config").write_text("git config")
+    (data_dir / "readme.txt").write_text("hi")
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(f"directories:\n  - {data_dir}\nignore:\n  - '.*'\n")
+
+    main(str(config_file))
+    captured = capsys.readouterr()
+    # Only readme.txt should be counted (1 file), .git directory skipped.
+    assert "Files     : 1" in captured.out
+
+
+def test_main_config_ignore_wildcard_extension(tmp_path, capsys):
+    """main excludes files matching a wildcard extension pattern in config ignore."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "visible.txt").write_text("hello")
+    (data_dir / "unwanted.tmp").write_text("junk")
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(f"directories:\n  - {data_dir}\nignore:\n  - '*.tmp'\n")
+
+    main(str(config_file))
+    captured = capsys.readouterr()
+    # Only visible.txt should be counted.
+    assert "Files     : 1" in captured.out
+
+
+def test_main_no_ignore_key_counts_all_files(tmp_path, capsys):
+    """Without an ignore key in config, all files (including hidden) are counted."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "visible.txt").write_text("hello")
+    (data_dir / ".hidden").write_text("world!")
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(f"directories:\n  - {data_dir}\n")
+
+    main(str(config_file))
+    captured = capsys.readouterr()
+    assert "Files     : 2" in captured.out
 
