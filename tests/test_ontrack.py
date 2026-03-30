@@ -237,7 +237,7 @@ def test_get_directory_stats_group_matches_current_user():
         with open(path_a, "w") as f:
             f.write("hello")  # 5 bytes
 
-        stats = get_directory_stats(tmpdir, group=group_name)
+        stats = get_directory_stats(tmpdir, groups=[group_name])
         assert stats["file_count"] == 1
         assert stats["total_size"] == 5
 
@@ -267,7 +267,7 @@ def test_get_directory_stats_group_excludes_files():
         if other_group is None:
             pytest.skip("No group found that excludes the current user")
 
-        stats = get_directory_stats(tmpdir, group=other_group)
+        stats = get_directory_stats(tmpdir, groups=[other_group])
         assert stats["file_count"] == 0
         assert stats["total_size"] == 0
 
@@ -278,7 +278,7 @@ def test_get_directory_stats_group_excludes_files():
 
 
 def test_report_directory_with_group(capsys):
-    """report_directory prints the Group line when a group is supplied."""
+    """report_directory prints the Groups line when groups are supplied."""
     current_gid = os.getgid()
     group_name = grp.getgrgid(current_gid).gr_name
 
@@ -286,21 +286,21 @@ def test_report_directory_with_group(capsys):
         with open(os.path.join(tmpdir, "sample.txt"), "w") as f:
             f.write("data")
 
-        report_directory(tmpdir, group=group_name)
+        report_directory(tmpdir, groups=[group_name])
         captured = capsys.readouterr()
-        assert "Group" in captured.out
+        assert "Groups" in captured.out
         assert group_name in captured.out
 
 
 def test_report_directory_without_group_no_group_line(capsys):
-    """report_directory does not print a Group line when no group is given."""
+    """report_directory does not print a Groups line when no groups are given."""
     with tempfile.TemporaryDirectory() as tmpdir:
         with open(os.path.join(tmpdir, "sample.txt"), "w") as f:
             f.write("data")
 
         report_directory(tmpdir)
         captured = capsys.readouterr()
-        assert "Group" not in captured.out
+        assert "Groups" not in captured.out
 
 
 # ---------------------------------------------------------------------------
@@ -323,10 +323,71 @@ def test_main_with_group(tmp_path, capsys):
     config_file = tmp_path / "config.yaml"
     config_file.write_text(f"directories:\n  - {data_dir}\n")
 
-    main(str(config_file), group=group_name)
+    main(str(config_file), groups=[group_name])
     captured = capsys.readouterr()
     assert str(user_subdir) in captured.out
-    assert "Group" in captured.out
+    assert "Groups" in captured.out
+    assert group_name in captured.out
+
+
+def test_main_with_multiple_groups(tmp_path, capsys):
+    """main accepts multiple groups and reports subdirectories owned by members of any."""
+    current_uid = os.getuid()
+    current_gid = os.getgid()
+    current_user = pwd.getpwuid(current_uid).pw_name
+    group_name = grp.getgrgid(current_gid).gr_name
+
+    # Find a second group the current user belongs to, if one exists.
+    second_group = group_name
+    for g in grp.getgrall():
+        if g.gr_name != group_name and current_user in g.gr_mem:
+            second_group = g.gr_name
+            break
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    user_subdir = data_dir / "user_dir"
+    user_subdir.mkdir()
+    (user_subdir / "file.txt").write_text("hello world")
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(f"directories:\n  - {data_dir}\n")
+
+    main(str(config_file), groups=[group_name, second_group])
+    captured = capsys.readouterr()
+    assert str(user_subdir) in captured.out
+    assert "Groups" in captured.out
+    assert group_name in captured.out
+
+
+def test_main_multiple_groups_from_config(tmp_path, capsys):
+    """main reads multiple groups from the config file's groups list."""
+    current_uid = os.getuid()
+    current_gid = os.getgid()
+    current_user = pwd.getpwuid(current_uid).pw_name
+    group_name = grp.getgrgid(current_gid).gr_name
+
+    # Find a second group the current user belongs to, if one exists.
+    second_group = group_name
+    for g in grp.getgrall():
+        if g.gr_name != group_name and current_user in g.gr_mem:
+            second_group = g.gr_name
+            break
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    user_subdir = data_dir / "user_dir"
+    user_subdir.mkdir()
+    (user_subdir / "file.txt").write_text("content")
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        f"directories:\n  - {data_dir}\ngroups:\n  - {group_name}\n  - {second_group}\n"
+    )
+
+    main(str(config_file))
+    captured = capsys.readouterr()
+    assert str(user_subdir) in captured.out
     assert group_name in captured.out
 
 
@@ -366,7 +427,7 @@ def test_main_logs_group_members(tmp_path, caplog):
     config_file.write_text(f"directories:\n  - {data_dir}\n")
 
     with caplog.at_level(logging.INFO, logger="ontrack"):
-        main(str(config_file), group=group_name)
+        main(str(config_file), groups=[group_name])
 
     assert "Users found in group" in caplog.text
     assert group_name in caplog.text
@@ -703,7 +764,7 @@ def test_find_reporting_directories_files_and_subdir(tmp_path):
 
 
 def test_main_group_from_config(tmp_path, capsys):
-    """main reads the group from the config file when --group is not supplied."""
+    """main reads the groups from the config file when --groups is not supplied."""
     current_gid = os.getgid()
     group_name = grp.getgrgid(current_gid).gr_name
 
@@ -714,16 +775,16 @@ def test_main_group_from_config(tmp_path, capsys):
     (user_subdir / "file.txt").write_text("content")
 
     config_file = tmp_path / "config.yaml"
-    config_file.write_text(f"directories:\n  - {data_dir}\ngroup: {group_name}\n")
+    config_file.write_text(f"directories:\n  - {data_dir}\ngroups:\n  - {group_name}\n")
 
-    main(str(config_file))  # no group kwarg; should come from config
+    main(str(config_file))  # no groups kwarg; should come from config
     captured = capsys.readouterr()
     assert str(user_subdir) in captured.out
     assert group_name in captured.out
 
 
 def test_main_cli_group_overrides_config(tmp_path, capsys):
-    """CLI --group takes precedence over the group key in the config file."""
+    """CLI --groups takes precedence over the groups key in the config file."""
     current_gid = os.getgid()
     group_name = grp.getgrgid(current_gid).gr_name
 
@@ -734,10 +795,10 @@ def test_main_cli_group_overrides_config(tmp_path, capsys):
     (user_subdir / "file.txt").write_text("content")
 
     config_file = tmp_path / "config.yaml"
-    # Config contains a bogus group; the CLI group should win.
-    config_file.write_text(f"directories:\n  - {data_dir}\ngroup: __bogus_group__\n")
+    # Config contains a bogus group; the CLI groups should win.
+    config_file.write_text(f"directories:\n  - {data_dir}\ngroups:\n  - __bogus_group__\n")
 
-    main(str(config_file), group=group_name)
+    main(str(config_file), groups=[group_name])
     captured = capsys.readouterr()
     assert str(user_subdir) in captured.out
     assert group_name in captured.out
@@ -751,7 +812,7 @@ def test_main_with_group_invalid_parent_dir(tmp_path, capsys):
     config_file = tmp_path / "config.yaml"
     config_file.write_text("directories:\n  - /nonexistent/path/xyz\n")
 
-    main(str(config_file), group=group_name)
+    main(str(config_file), groups=[group_name])
     captured = capsys.readouterr()
     assert "WARNING" in captured.err
 
@@ -925,13 +986,13 @@ def test_build_directory_entry_invalid(capsys):
 
 
 def test_build_directory_entry_with_group(tmp_path):
-    """_build_directory_entry includes the group key when group is supplied."""
+    """_build_directory_entry includes the groups key when groups are supplied."""
     current_gid = os.getgid()
     group_name = grp.getgrgid(current_gid).gr_name
     (tmp_path / "f.txt").write_text("data")
-    entry = _build_directory_entry(str(tmp_path), group=group_name)
+    entry = _build_directory_entry(str(tmp_path), groups=[group_name])
     assert entry is not None
-    assert entry["group"] == group_name
+    assert entry["groups"] == [group_name]
 
 
 # ---------------------------------------------------------------------------

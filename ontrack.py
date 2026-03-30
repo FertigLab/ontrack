@@ -3,7 +3,7 @@
 
 Two operating modes are supported:
 
-* **Group mode** (``--group`` supplied or ``group:`` set in the config file):
+* **Group mode** (``--groups`` supplied or ``groups:`` set in the config file):
   For each configured directory, the script finds subdirectories owned by
   users who belong to the specified Unix group and reports stats for each of
   those subdirectories.  Only the immediate children are checked for
@@ -205,23 +205,24 @@ def get_group_subdirectories(
 
 def get_directory_stats(
     path: str,
-    group: str | None = None,
+    groups: list[str] | None = None,
     show_progress: bool = False,
     ignore_patterns: list[str] | None = None,
 ) -> dict:
     """Return file count and total size (bytes) for a directory tree.
 
-    If *group* is given, only files owned by users belonging to that Unix
-    group are counted.  If *show_progress* is ``True`` (default: ``False``),
-    a tqdm progress bar is displayed on stderr for each subdirectory visited
-    during the walk; set it to ``False`` to suppress all progress output.
-    Directories and files whose base names match any pattern in
-    *ignore_patterns* are excluded from the walk and the counts respectively.
+    If *groups* is given, only files owned by users belonging to any of those
+    Unix groups are counted.  If *show_progress* is ``True`` (default:
+    ``False``), a tqdm progress bar is displayed on stderr for each
+    subdirectory visited during the walk; set it to ``False`` to suppress all
+    progress output.  Directories and files whose base names match any pattern
+    in *ignore_patterns* are excluded from the walk and the counts
+    respectively.
 
     Args:
         path: Root of the directory tree to scan.
-        group: Optional Unix group name; when supplied only files owned by
-            members of this group are included in the counts.
+        groups: Optional list of Unix group names; when supplied only files
+            owned by members of these groups are included in the counts.
         show_progress: Display a tqdm progress bar on stderr while scanning.
         ignore_patterns: Shell-style glob patterns (see :func:`_is_ignored`).
             Matched directories are not descended into; matched files are not
@@ -229,8 +230,10 @@ def get_directory_stats(
     """
     patterns: list[str] = ignore_patterns or []
     allowed_users: set[str] | None = None
-    if group is not None:
-        allowed_users = get_group_members(group)
+    if groups is not None:
+        allowed_users = set()
+        for group in groups:
+            allowed_users.update(get_group_members(group))
 
     file_count = 0
     total_size = 0
@@ -274,7 +277,7 @@ def format_size(size_bytes: int) -> str:
 
 def _build_directory_entry(
     path: str,
-    group: str | None = None,
+    groups: list[str] | None = None,
     light: bool = False,
     show_progress: bool = False,
     ignore_patterns: list[str] | None = None,
@@ -287,7 +290,8 @@ def _build_directory_entry(
 
     Args:
         path: Directory to report on.
-        group: Optional Unix group name forwarded to :func:`get_directory_stats`.
+        groups: Optional list of Unix group names forwarded to
+            :func:`get_directory_stats`.
         light: When ``True``, skip file-count and size scanning.
         show_progress: Forward progress display flag to :func:`get_directory_stats`.
         ignore_patterns: Shell-style glob patterns forwarded to
@@ -300,11 +304,11 @@ def _build_directory_entry(
 
     username = get_username(path)
     entry: dict = {"directory": path, "username": username}
-    if group is not None:
-        entry["group"] = group
+    if groups is not None:
+        entry["groups"] = groups
     if not light:
         stats = get_directory_stats(
-            path, group=group, show_progress=show_progress, ignore_patterns=ignore_patterns
+            path, groups=groups, show_progress=show_progress, ignore_patterns=ignore_patterns
         )
         entry["file_count"] = stats["file_count"]
         entry["total_size"] = stats["total_size"]
@@ -314,7 +318,7 @@ def _build_directory_entry(
 
 def report_directory(
     path: str,
-    group: str | None = None,
+    groups: list[str] | None = None,
     light: bool = False,
     show_progress: bool = False,
     ignore_patterns: list[str] | None = None,
@@ -323,7 +327,7 @@ def report_directory(
 
     Args:
         path: Directory to report on.
-        group: Optional Unix group name.
+        groups: Optional list of Unix group names.
         light: When ``True``, skip file-count and size scanning.
         show_progress: Display progress bars while scanning.
         ignore_patterns: Shell-style glob patterns; matched files and
@@ -331,7 +335,7 @@ def report_directory(
     """
     entry = _build_directory_entry(
         path,
-        group=group,
+        groups=groups,
         light=light,
         show_progress=show_progress,
         ignore_patterns=ignore_patterns,
@@ -341,8 +345,8 @@ def report_directory(
 
     print(f"Directory : {entry['directory']}")
     print(f"Username  : {entry['username']}")
-    if "group" in entry:
-        print(f"Group     : {entry['group']}")
+    if "groups" in entry:
+        print(f"Groups    : {', '.join(entry['groups'])}")
     if "file_count" in entry:
         print(f"Files     : {entry['file_count']}")
         print(f"Total size: {entry['total_size_human']}")
@@ -373,7 +377,7 @@ def _is_ignored(name: str, patterns: list[str]) -> bool:
 
 def main(
     config_path: str = "config.yaml",
-    group: str | None = None,
+    groups: list[str] | None = None,
     light: bool = False,
     progress: bool = False,
     output: str | None = None,
@@ -382,7 +386,8 @@ def main(
 
     Args:
         config_path: Path to the YAML configuration file.
-        group: Unix group name; overrides the ``group`` key in the config file.
+        groups: List of Unix group names; overrides the ``groups`` key in the
+            config file.
         light: When ``True``, skip file-count and size scanning.
         progress: Display tqdm progress bars while scanning.
         output: Write YAML report to this path instead of printing to stdout.
@@ -390,9 +395,9 @@ def main(
     config = load_config(config_path)
     directories = config.get("directories", [])
 
-    # Allow the group to be specified in the config file; CLI takes precedence.
-    if group is None:
-        group = config.get("group")
+    # Allow groups to be specified in the config file; CLI takes precedence.
+    if groups is None:
+        groups = config.get("groups")
 
     if not directories:
         print("No directories specified in configuration.", file=sys.stderr)
@@ -405,9 +410,12 @@ def main(
 
     logger.info("Directories supplied: %s", directories)
 
-    if group is not None:
-        members = get_group_members(group)
-        logger.info("Users found in group '%s': %s", group, sorted(members))
+    if groups is not None:
+        members: set[str] = set()
+        for group in groups:
+            group_members = get_group_members(group)
+            logger.info("Users found in group '%s': %s", group, sorted(group_members))
+            members.update(group_members)
 
         subdirs: list[str] = []
         for parent_dir in directories:
@@ -434,7 +442,7 @@ def main(
         for path in iterator:
             entry = _build_directory_entry(
                 path,
-                group=group,
+                groups=groups,
                 light=light,
                 show_progress=progress,
                 ignore_patterns=ignore_patterns,
@@ -448,7 +456,7 @@ def main(
         for path in iterator:
             report_directory(
                 path,
-                group=group,
+                groups=groups,
                 light=light,
                 show_progress=progress,
                 ignore_patterns=ignore_patterns,
@@ -466,13 +474,15 @@ if __name__ == "__main__":
         help="Path to the configuration YAML file (default: config.yaml)",
     )
     parser.add_argument(
-        "--group",
+        "--groups",
+        nargs="+",
         default=None,
+        metavar="GROUP",
         help=(
             "For each configured directory, report subdirectories owned by users "
-            "belonging to this Unix group.  Descent continues into directories that "
-            "contain only subdirectories; a directory with at least one file is used "
-            "as the reporting directory."
+            "belonging to any of these Unix groups.  Accepts one or more group names.  "
+            "Descent continues into directories that contain only subdirectories; a "
+            "directory with at least one file is used as the reporting directory."
         ),
     )
     parser.add_argument(
@@ -496,7 +506,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     main(
         args.config,
-        group=args.group,
+        groups=args.groups,
         light=args.light,
         progress=args.progress,
         output=args.output,
