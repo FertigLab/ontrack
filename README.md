@@ -25,8 +25,9 @@ Create a YAML config file (see [`config.yaml`](config.yaml) for a template):
 paths:
   - /path/to/data
 
-# Unix group whose members' subdirectories should be reported (optional)
-group: your_group_name
+# Unix groups whose members' subdirectories should be reported (optional)
+groups:
+  - your_group_name
 
 # Shell-style glob patterns for files/directories to exclude (optional)
 ignore:
@@ -37,7 +38,7 @@ ignore:
 | Key | Description |
 |---|---|
 | `paths` | List of top-level paths to scan (required) |
-| `group` | Unix group name; enables group mode (optional, overridden by `--group`) |
+| `groups` | List of Unix group names; enables group mode (optional, overridden by `--groups`) |
 | `ignore` | Glob patterns matched against base names to exclude from all scans |
 
 ## Usage
@@ -49,7 +50,7 @@ python3 ontrack.py --config config.yaml [OPTIONS]
 | Option | Description |
 |---|---|
 | `--config FILE` | Path to the YAML config file (default: `config.yaml`) |
-| `--group GROUP` | Unix group name; overrides the `group` key in the config file |
+| `--groups GROUP [GROUP ...]` | One or more Unix group names; overrides the `groups` key in the config file |
 | `--light` | Skip file-count and size scanning; only report directory and owner |
 | `--progress` | Show progress bars while scanning |
 | `--output FILE` | Write the report as YAML to `FILE` instead of printing to stdout |
@@ -62,10 +63,10 @@ python3 ontrack.py --config config.yaml [OPTIONS]
 python3 ontrack.py --config config.yaml
 ```
 
-**Group mode** — for each configured directory, finds and reports subdirectories owned by members of the specified Unix group. Descends until a directory containing at least one file is found:
+**Group mode** — for each configured directory, finds and reports subdirectories owned by members of the specified Unix groups. Descends until a directory containing at least one file is found:
 
 ```bash
-python3 ontrack.py --config config.yaml --group researchers
+python3 ontrack.py --config config.yaml --groups researchers
 ```
 
 ## Example Output
@@ -73,13 +74,13 @@ python3 ontrack.py --config config.yaml --group researchers
 ```
 Directory : /data/projects/alice
 Username  : alice
-Group     : researchers
+Groups    : researchers
 Files     : 1042
 Total size: 3.57 GB
 
 Directory : /data/projects/bob
 Username  : bob
-Group     : researchers
+Groups    : researchers
 Files     : 204
 Total size: 512.00 MB
 ```
