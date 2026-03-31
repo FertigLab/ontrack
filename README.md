@@ -74,13 +74,13 @@ python3 ontrack.py --config config.yaml --groups researchers
 ```
 Directory : /data/projects/alice
 Username  : alice
-Groups    : researchers
+Group     : researchers
 Files     : 1042
 Total size: 3.57 GB
 
 Directory : /data/projects/bob
 Username  : bob
-Groups    : researchers
+Group     : researchers
 Files     : 204
 Total size: 512.00 MB
 ```
