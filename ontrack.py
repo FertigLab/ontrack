@@ -51,6 +51,7 @@ import logging
 import os
 import pathlib
 import pwd
+import subprocess
 import sys
 
 import yaml
@@ -203,6 +204,62 @@ def get_group_subdirectories(
     return result
 
 
+def _run_du(
+    path: str,
+    patterns: list[str],
+    all_files: bool = False,
+) -> list[tuple[int, str]]:
+    """Run ``du(1)`` and return a list of ``(size_bytes, path)`` pairs.
+
+    Uses ``--apparent-size`` and ``--block-size=1`` to report byte-accurate
+    apparent file sizes, matching ``os.stat().st_size``.  When *all_files* is
+    ``False`` (the default) only directory entries are emitted by ``du``; when
+    ``True`` both regular files and directories are included via the ``-a``
+    flag.
+
+    Args:
+        path: Root directory to pass to ``du``.
+        patterns: Shell-style glob patterns forwarded as ``--exclude`` options
+            to ``du``.  Matching files and directories are omitted from the
+            output.
+        all_files: Pass ``-a`` to ``du`` so that regular files are included
+            in the output in addition to directories.
+
+    Returns:
+        A list of ``(size_in_bytes, absolute_path)`` tuples parsed from
+        ``du`` stdout, or an empty list if ``du`` cannot be executed or
+        produces no parsable output.
+    """
+    cmd = ["du", "--apparent-size", "--block-size=1"]
+    if all_files:
+        cmd.append("-a")
+    for pattern in patterns:
+        cmd.extend(["--exclude", pattern])
+    cmd.append(path)
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if proc.returncode != 0:
+            logger.warning(
+                "du exited with code %d for %s: %s",
+                proc.returncode,
+                path,
+                proc.stderr.strip(),
+            )
+        result: list[tuple[int, str]] = []
+        for line in proc.stdout.splitlines():
+            if "\t" not in line:
+                continue
+            size_str, entry_path = line.split("\t", 1)
+            try:
+                result.append((int(size_str), entry_path))
+            except ValueError:
+                logger.debug("Could not parse du output line: %r", line)
+        return result
+    except OSError as exc:
+        logger.warning("Could not run du for %s: %s", path, exc)
+        return []
+
+
 def get_directory_stats(
     path: str,
     groups: list[str] | None = None,
@@ -211,19 +268,23 @@ def get_directory_stats(
 ) -> dict:
     """Return file count and total size (bytes) for a directory tree.
 
+    Uses ``du(1)`` for directory traversal, which correctly handles
+    directories where the calling user lacks execute permission and is
+    significantly faster than Python-level ``os.walk`` on large trees or
+    network filesystems.  Directories and files whose base names match any
+    pattern in *ignore_patterns* are excluded via ``du``'s ``--exclude``
+    option.
+
     If *groups* is given, only files owned by users belonging to any of those
-    Unix groups are counted.  If *show_progress* is ``True`` (default:
-    ``False``), a tqdm progress bar is displayed on stderr for each
-    subdirectory visited during the walk; set it to ``False`` to suppress all
-    progress output.  Directories and files whose base names match any pattern
-    in *ignore_patterns* are excluded from the walk and the counts
-    respectively.
+    Unix groups are counted.  Ownership is determined via ``lstat``; files
+    whose ownership cannot be determined are included in the totals.
 
     Args:
         path: Root of the directory tree to scan.
         groups: Optional list of Unix group names; when supplied only files
             owned by members of these groups are included in the counts.
-        show_progress: Display a tqdm progress bar on stderr while scanning.
+        show_progress: Accepted for API compatibility; has no effect because
+            ``du`` completes the scan in a single subprocess call.
         ignore_patterns: Shell-style glob patterns (see :func:`_is_ignored`).
             Matched directories are not descended into; matched files are not
             counted.  ``None`` is treated as an empty list.
@@ -235,33 +296,33 @@ def get_directory_stats(
         for group in groups:
             allowed_users.update(get_group_members(group))
 
+    # First pass: du without -a lists only directories.  Building a set of
+    # these paths lets us distinguish directory entries from file entries in
+    # the second pass without an extra stat call per entry.
+    dir_entries = _run_du(path, patterns, all_files=False)
+    dir_paths: set[str] = {p for _, p in dir_entries}
+
+    # Second pass: du -a lists both files and directories.
+    all_entries = _run_du(path, patterns, all_files=True)
+
     file_count = 0
     total_size = 0
-    walker = os.walk(path)
-    if show_progress:
-        walker = tqdm(
-            walker,
-            desc=f"Scanning {os.path.basename(path)}",
-            unit="dir",
-            file=sys.stderr,
-            leave=False,
-        )
-    for dirpath, dirnames, filenames in walker:
-        # Prune ignored subdirectories so os.walk does not descend into them.
-        if patterns:
-            dirnames[:] = [d for d in dirnames if not _is_ignored(d, patterns)]
-        dir_path = pathlib.Path(dirpath)
-        for filename in filenames:
-            if patterns and _is_ignored(filename, patterns):
-                continue
-            filepath = dir_path / filename
+    for size, entry_path in all_entries:
+        if entry_path in dir_paths:
+            continue  # skip directory entries
+        if allowed_users is not None:
             try:
-                if allowed_users is not None and filepath.owner() not in allowed_users:
+                file_uid = pathlib.Path(entry_path).lstat().st_uid
+                if _uid_to_username(file_uid) not in allowed_users:
                     continue
-                total_size += filepath.lstat().st_size
-                file_count += 1
-            except (OSError, KeyError):
+            except OSError:
+                # Cannot determine ownership (e.g. no execute permission on the
+                # containing directory); fall through and count the file anyway
+                # so that du's reported size is not silently discarded.
                 pass
+        file_count += 1
+        total_size += size
+
     return {"file_count": file_count, "total_size": total_size}
 
 
