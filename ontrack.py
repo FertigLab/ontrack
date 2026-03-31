@@ -349,9 +349,16 @@ def _build_directory_entry(
     valid directory.  In *light* mode only the path and username are included;
     file-count and size scanning are skipped.
 
+    *groups* is used only to label the output entry (``entry["groups"]``); it
+    is **not** forwarded to :func:`get_directory_stats`.  By the time this
+    function is called the reporting directory has already been selected
+    (e.g. by :func:`get_group_subdirectories`), so all files inside it should
+    be counted unconditionally.
+
     Args:
         path: Directory to report on.
-        groups: Optional list of Unix group names forwarded to
+        groups: Optional list of Unix group names included in the output entry
+            for display purposes.  Does not filter the files counted by
             :func:`get_directory_stats`.
         light: When ``True``, skip file-count and size scanning.
         show_progress: Forward progress display flag to :func:`get_directory_stats`.
@@ -369,7 +376,7 @@ def _build_directory_entry(
         entry["groups"] = groups
     if not light:
         stats = get_directory_stats(
-            path, groups=groups, show_progress=show_progress, ignore_patterns=ignore_patterns
+            path, show_progress=show_progress, ignore_patterns=ignore_patterns
         )
         entry["file_count"] = stats["file_count"]
         entry["total_size"] = stats["total_size"]

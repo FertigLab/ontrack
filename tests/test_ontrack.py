@@ -994,6 +994,34 @@ def test_build_directory_entry_with_group(tmp_path):
     assert entry["groups"] == [group_name]
 
 
+def test_build_directory_entry_group_does_not_filter_stats(tmp_path):
+    """_build_directory_entry counts all files even when groups are supplied.
+
+    groups is used only as a display label on the entry; it must not be
+    forwarded to get_directory_stats as a file-ownership filter.  The
+    reporting directory has already been selected by group ownership, so all
+    files inside it – regardless of who owns them – should be counted.
+    """
+    current_gid = os.getgid()
+    group_name = grp.getgrgid(current_gid).gr_name
+
+    # Two files: both owned by the current user (who is in group_name).
+    # The total should be 2 regardless of the groups label.
+    (tmp_path / "file1.txt").write_text("hello")
+    (tmp_path / "file2.txt").write_text("world")
+
+    # Call with groups= (display label only) and without groups= (baseline).
+    entry_with_group = _build_directory_entry(str(tmp_path), groups=[group_name])
+    entry_no_group = _build_directory_entry(str(tmp_path))
+
+    assert entry_with_group is not None
+    assert entry_no_group is not None
+    # Stats must be identical regardless of whether groups is supplied.
+    assert entry_with_group["file_count"] == entry_no_group["file_count"]
+    assert entry_with_group["total_size"] == entry_no_group["total_size"]
+    assert entry_with_group["file_count"] == 2
+
+
 # ---------------------------------------------------------------------------
 # _is_ignored
 # ---------------------------------------------------------------------------
