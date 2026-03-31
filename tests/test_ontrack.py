@@ -132,7 +132,7 @@ def test_get_username_returns_string():
 
 
 def test_load_config():
-    config_data = {"directories": ["/tmp/test1", "/tmp/test2"]}
+    config_data = {"paths": ["/tmp/test1", "/tmp/test2"]}
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=".yaml", delete=False
     ) as tmp:
@@ -141,7 +141,7 @@ def test_load_config():
 
     try:
         loaded = load_config(tmp_path)
-        assert loaded["directories"] == ["/tmp/test1", "/tmp/test2"]
+        assert loaded["paths"] == ["/tmp/test1", "/tmp/test2"]
     finally:
         os.unlink(tmp_path)
 
@@ -178,7 +178,7 @@ def test_report_directory_invalid(capsys):
 
 def test_main_no_directories(tmp_path):
     config_file = tmp_path / "config.yaml"
-    config_file.write_text("directories: []\n")
+    config_file.write_text("paths: []\n")
 
     with pytest.raises(SystemExit):
         main(str(config_file))
@@ -190,7 +190,7 @@ def test_main_with_valid_directory(tmp_path, capsys):
     (data_dir / "file.txt").write_text("hello world")
 
     config_file = tmp_path / "config.yaml"
-    config_file.write_text(f"directories:\n  - {data_dir}\n")
+    config_file.write_text(f"paths:\n  - {data_dir}\n")
 
     main(str(config_file))
     captured = capsys.readouterr()
@@ -321,7 +321,7 @@ def test_main_with_group(tmp_path, capsys):
     (user_subdir / "file.txt").write_text("hello world")
 
     config_file = tmp_path / "config.yaml"
-    config_file.write_text(f"directories:\n  - {data_dir}\n")
+    config_file.write_text(f"paths:\n  - {data_dir}\n")
 
     main(str(config_file), groups=[group_name])
     captured = capsys.readouterr()
@@ -351,7 +351,7 @@ def test_main_with_multiple_groups(tmp_path, capsys):
     (user_subdir / "file.txt").write_text("hello world")
 
     config_file = tmp_path / "config.yaml"
-    config_file.write_text(f"directories:\n  - {data_dir}\n")
+    config_file.write_text(f"paths:\n  - {data_dir}\n")
 
     main(str(config_file), groups=[group_name, second_group])
     captured = capsys.readouterr()
@@ -382,7 +382,7 @@ def test_main_multiple_groups_from_config(tmp_path, capsys):
 
     config_file = tmp_path / "config.yaml"
     config_file.write_text(
-        f"directories:\n  - {data_dir}\ngroups:\n  - {group_name}\n  - {second_group}\n"
+        f"paths:\n  - {data_dir}\ngroups:\n  - {group_name}\n  - {second_group}\n"
     )
 
     main(str(config_file))
@@ -403,12 +403,12 @@ def test_main_logs_directories(tmp_path, caplog):
     (data_dir / "file.txt").write_text("hello")
 
     config_file = tmp_path / "config.yaml"
-    config_file.write_text(f"directories:\n  - {data_dir}\n")
+    config_file.write_text(f"paths:\n  - {data_dir}\n")
 
     with caplog.at_level(logging.INFO, logger="ontrack"):
         main(str(config_file))
 
-    assert "Directories supplied" in caplog.text
+    assert "Paths supplied" in caplog.text
     assert str(data_dir) in caplog.text
 
 
@@ -424,7 +424,7 @@ def test_main_logs_group_members(tmp_path, caplog):
     (data_dir / "file.txt").write_text("hello")
 
     config_file = tmp_path / "config.yaml"
-    config_file.write_text(f"directories:\n  - {data_dir}\n")
+    config_file.write_text(f"paths:\n  - {data_dir}\n")
 
     with caplog.at_level(logging.INFO, logger="ontrack"):
         main(str(config_file), groups=[group_name])
@@ -441,7 +441,7 @@ def test_main_no_group_logging_skipped(tmp_path, caplog):
     (data_dir / "file.txt").write_text("hello")
 
     config_file = tmp_path / "config.yaml"
-    config_file.write_text(f"directories:\n  - {data_dir}\n")
+    config_file.write_text(f"paths:\n  - {data_dir}\n")
 
     with caplog.at_level(logging.INFO, logger="ontrack"):
         main(str(config_file))
@@ -775,7 +775,7 @@ def test_main_group_from_config(tmp_path, capsys):
     (user_subdir / "file.txt").write_text("content")
 
     config_file = tmp_path / "config.yaml"
-    config_file.write_text(f"directories:\n  - {data_dir}\ngroups:\n  - {group_name}\n")
+    config_file.write_text(f"paths:\n  - {data_dir}\ngroups:\n  - {group_name}\n")
 
     main(str(config_file))  # no groups kwarg; should come from config
     captured = capsys.readouterr()
@@ -796,7 +796,7 @@ def test_main_cli_group_overrides_config(tmp_path, capsys):
 
     config_file = tmp_path / "config.yaml"
     # Config contains a bogus group; the CLI groups should win.
-    config_file.write_text(f"directories:\n  - {data_dir}\ngroups:\n  - __bogus_group__\n")
+    config_file.write_text(f"paths:\n  - {data_dir}\ngroups:\n  - __bogus_group__\n")
 
     main(str(config_file), groups=[group_name])
     captured = capsys.readouterr()
@@ -810,7 +810,7 @@ def test_main_with_group_invalid_parent_dir(tmp_path, capsys):
     group_name = grp.getgrgid(current_gid).gr_name
 
     config_file = tmp_path / "config.yaml"
-    config_file.write_text("directories:\n  - /nonexistent/path/xyz\n")
+    config_file.write_text("paths:\n  - /nonexistent/path/xyz\n")
 
     main(str(config_file), groups=[group_name])
     captured = capsys.readouterr()
@@ -858,7 +858,7 @@ def test_main_light_mode_omits_stats(tmp_path, capsys):
     (data_dir / "file.txt").write_text("hello world")
 
     config_file = tmp_path / "config.yaml"
-    config_file.write_text(f"directories:\n  - {data_dir}\n")
+    config_file.write_text(f"paths:\n  - {data_dir}\n")
 
     main(str(config_file), light=True)
     captured = capsys.readouterr()
@@ -879,7 +879,7 @@ def test_main_output_writes_yaml(tmp_path):
     (data_dir / "file.txt").write_text("hello world")
 
     config_file = tmp_path / "config.yaml"
-    config_file.write_text(f"directories:\n  - {data_dir}\n")
+    config_file.write_text(f"paths:\n  - {data_dir}\n")
 
     output_file = str(tmp_path / "report.yaml")
     main(str(config_file), output=output_file)
@@ -904,7 +904,7 @@ def test_main_output_does_not_print(tmp_path, capsys):
     (data_dir / "file.txt").write_text("content")
 
     config_file = tmp_path / "config.yaml"
-    config_file.write_text(f"directories:\n  - {data_dir}\n")
+    config_file.write_text(f"paths:\n  - {data_dir}\n")
 
     output_file = str(tmp_path / "report.yaml")
     main(str(config_file), output=output_file)
@@ -919,7 +919,7 @@ def test_main_output_light_mode(tmp_path):
     (data_dir / "file.txt").write_text("hello")
 
     config_file = tmp_path / "config.yaml"
-    config_file.write_text(f"directories:\n  - {data_dir}\n")
+    config_file.write_text(f"paths:\n  - {data_dir}\n")
 
     output_file = str(tmp_path / "report.yaml")
     main(str(config_file), light=True, output=output_file)
@@ -1154,7 +1154,7 @@ def test_main_config_ignore_excludes_hidden_files(tmp_path, capsys):
     (data_dir / ".hidden").write_text("secret")
 
     config_file = tmp_path / "config.yaml"
-    config_file.write_text(f"directories:\n  - {data_dir}\nignore:\n  - '.*'\n")
+    config_file.write_text(f"paths:\n  - {data_dir}\nignore:\n  - '.*'\n")
 
     main(str(config_file))
     captured = capsys.readouterr()
@@ -1172,7 +1172,7 @@ def test_main_config_ignore_excludes_dirs(tmp_path, capsys):
     (data_dir / "readme.txt").write_text("hi")
 
     config_file = tmp_path / "config.yaml"
-    config_file.write_text(f"directories:\n  - {data_dir}\nignore:\n  - '.*'\n")
+    config_file.write_text(f"paths:\n  - {data_dir}\nignore:\n  - '.*'\n")
 
     main(str(config_file))
     captured = capsys.readouterr()
@@ -1188,7 +1188,7 @@ def test_main_config_ignore_wildcard_extension(tmp_path, capsys):
     (data_dir / "unwanted.tmp").write_text("junk")
 
     config_file = tmp_path / "config.yaml"
-    config_file.write_text(f"directories:\n  - {data_dir}\nignore:\n  - '*.tmp'\n")
+    config_file.write_text(f"paths:\n  - {data_dir}\nignore:\n  - '*.tmp'\n")
 
     main(str(config_file))
     captured = capsys.readouterr()
@@ -1204,7 +1204,7 @@ def test_main_no_ignore_key_counts_all_files(tmp_path, capsys):
     (data_dir / ".hidden").write_text("world!")
 
     config_file = tmp_path / "config.yaml"
-    config_file.write_text(f"directories:\n  - {data_dir}\n")
+    config_file.write_text(f"paths:\n  - {data_dir}\n")
 
     main(str(config_file))
     captured = capsys.readouterr()

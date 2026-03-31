@@ -2,7 +2,7 @@
 # Specify the top-level directories to scan.
 # For each directory, first-level subdirectories owned by members of `groups`
 # will be reported.
-directories:
+paths:
   - /path/to/your/data
 
 # Unix groups whose members' subdirectories should be reported.
