@@ -1,5 +1,7 @@
 # ontrack
 
+[![Tests](https://github.com/FertigLab/ontrack/actions/workflows/tests.yml/badge.svg)](https://github.com/FertigLab/ontrack/actions/workflows/tests.yml)
+
 A command-line tool that scans directory trees and reports file statistics (file count, total size) for locations defined in a YAML configuration file. Supports Unix group-based filtering.
 
 ## Requirements
@@ -20,7 +22,7 @@ Create a YAML config file (see [`config.yaml`](config.yaml) for a template):
 
 ```yaml
 # Top-level directories to scan
-directories:
+paths:
   - /path/to/data
 
 # Unix group whose members' subdirectories should be reported (optional)
@@ -34,7 +36,7 @@ ignore:
 
 | Key | Description |
 |---|---|
-| `directories` | List of top-level paths to scan (required) |
+| `paths` | List of top-level paths to scan (required) |
 | `group` | Unix group name; enables group mode (optional, overridden by `--group`) |
 | `ignore` | Glob patterns matched against base names to exclude from all scans |
 

@@ -393,14 +393,14 @@ def main(
         output: Write YAML report to this path instead of printing to stdout.
     """
     config = load_config(config_path)
-    directories = config.get("directories", [])
+    paths: list[str] = config.get("paths", [])
 
     # Allow groups to be specified in the config file; CLI takes precedence.
     if groups is None:
         groups = config.get("groups")
 
-    if not directories:
-        print("No directories specified in configuration.", file=sys.stderr)
+    if not paths:
+        print("No paths specified in configuration.", file=sys.stderr)
         sys.exit(1)
 
     # Read ignore patterns from the config file.
@@ -408,7 +408,7 @@ def main(
     if ignore_patterns:
         logger.info("Ignore patterns: %s", ignore_patterns)
 
-    logger.info("Directories supplied: %s", directories)
+    logger.info("Paths supplied: %s", paths)
 
     if groups is not None:
         members: set[str] = set()
@@ -418,7 +418,7 @@ def main(
             members.update(group_members)
 
         subdirs: list[str] = []
-        for parent_dir in directories:
+        for parent_dir in paths:
             if not pathlib.Path(parent_dir).is_dir():
                 print(
                     f"WARNING: '{parent_dir}' is not a valid directory – skipping.",
@@ -429,7 +429,7 @@ def main(
 
         paths_to_process: list[str] = subdirs
     else:
-        paths_to_process = directories
+        paths_to_process = paths
 
     iterator = (
         tqdm(paths_to_process, desc="Processing directories", unit="dir", file=sys.stderr)
