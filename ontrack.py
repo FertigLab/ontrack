@@ -346,7 +346,7 @@ def report_directory(
     print(f"Directory : {entry['directory']}")
     print(f"Username  : {entry['username']}")
     if "groups" in entry:
-        print(f"Groups    : {', '.join(entry['groups'])}")
+        print(f"Group     : {', '.join(entry['groups'])}")
     if "file_count" in entry:
         print(f"Files     : {entry['file_count']}")
         print(f"Total size: {entry['total_size_human']}")

@@ -278,7 +278,7 @@ def test_get_directory_stats_group_excludes_files():
 
 
 def test_report_directory_with_group(capsys):
-    """report_directory prints the Groups line when groups are supplied."""
+    """report_directory prints the Group line when groups are supplied."""
     current_gid = os.getgid()
     group_name = grp.getgrgid(current_gid).gr_name
 
@@ -288,19 +288,17 @@ def test_report_directory_with_group(capsys):
 
         report_directory(tmpdir, groups=[group_name])
         captured = capsys.readouterr()
-        assert "Groups" in captured.out
+        assert "Group" in captured.out
         assert group_name in captured.out
-
-
 def test_report_directory_without_group_no_group_line(capsys):
-    """report_directory does not print a Groups line when no groups are given."""
+    """report_directory does not print a Group line when no groups are given."""
     with tempfile.TemporaryDirectory() as tmpdir:
         with open(os.path.join(tmpdir, "sample.txt"), "w") as f:
             f.write("data")
 
         report_directory(tmpdir)
         captured = capsys.readouterr()
-        assert "Groups" not in captured.out
+        assert "Group     :" not in captured.out
 
 
 # ---------------------------------------------------------------------------
@@ -326,7 +324,7 @@ def test_main_with_group(tmp_path, capsys):
     main(str(config_file), groups=[group_name])
     captured = capsys.readouterr()
     assert str(user_subdir) in captured.out
-    assert "Groups" in captured.out
+    assert "Group" in captured.out
     assert group_name in captured.out
 
 
@@ -356,7 +354,7 @@ def test_main_with_multiple_groups(tmp_path, capsys):
     main(str(config_file), groups=[group_name, second_group])
     captured = capsys.readouterr()
     assert str(user_subdir) in captured.out
-    assert "Groups" in captured.out
+    assert "Group" in captured.out
     assert group_name in captured.out
 
 
