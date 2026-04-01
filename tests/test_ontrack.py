@@ -18,6 +18,7 @@ from ontrack import (
     _build_directory_entry,
     _find_reporting_directories,
     _is_ignored,
+    _run_du,
     _uid_to_username,
     format_size,
     get_directory_stats,
@@ -993,6 +994,34 @@ def test_build_directory_entry_with_group(tmp_path):
     assert entry["groups"] == [group_name]
 
 
+def test_build_directory_entry_group_does_not_filter_stats(tmp_path):
+    """_build_directory_entry counts all files even when groups are supplied.
+
+    groups is used only as a display label on the entry; it must not be
+    forwarded to get_directory_stats as a file-ownership filter.  The
+    reporting directory has already been selected by group ownership, so all
+    files inside it – regardless of who owns them – should be counted.
+    """
+    current_gid = os.getgid()
+    group_name = grp.getgrgid(current_gid).gr_name
+
+    # Two files: both owned by the current user (who is in group_name).
+    # The total should be 2 regardless of the groups label.
+    (tmp_path / "file1.txt").write_text("hello")
+    (tmp_path / "file2.txt").write_text("world")
+
+    # Call with groups= (display label only) and without groups= (baseline).
+    entry_with_group = _build_directory_entry(str(tmp_path), groups=[group_name])
+    entry_no_group = _build_directory_entry(str(tmp_path))
+
+    assert entry_with_group is not None
+    assert entry_no_group is not None
+    # Stats must be identical regardless of whether groups is supplied.
+    assert entry_with_group["file_count"] == entry_no_group["file_count"]
+    assert entry_with_group["total_size"] == entry_no_group["total_size"]
+    assert entry_with_group["file_count"] == 2
+
+
 # ---------------------------------------------------------------------------
 # _is_ignored
 # ---------------------------------------------------------------------------
@@ -1208,3 +1237,120 @@ def test_main_no_ignore_key_counts_all_files(tmp_path, capsys):
     captured = capsys.readouterr()
     assert "Files     : 2" in captured.out
 
+
+# ---------------------------------------------------------------------------
+# _run_du
+# ---------------------------------------------------------------------------
+
+
+def test_run_du_returns_files_and_dirs(tmp_path):
+    """_run_du with all_files=True returns both file and directory entries."""
+    (tmp_path / "a.txt").write_text("hello")  # 5 bytes
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    (sub / "b.txt").write_text("world!")  # 6 bytes
+
+    entries = _run_du(str(tmp_path), [], all_files=True)
+    paths = [p for _, p in entries]
+    assert any("a.txt" in p for p in paths)
+    assert any("b.txt" in p for p in paths)
+    assert any(str(tmp_path) == p for p in paths)  # root directory itself
+
+
+def test_run_du_dirs_only_excludes_regular_files(tmp_path):
+    """_run_du with all_files=False lists only directories, not regular files."""
+    (tmp_path / "a.txt").write_text("hello")
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    (sub / "b.txt").write_text("world!")
+
+    entries = _run_du(str(tmp_path), [], all_files=False)
+    paths = [p for _, p in entries]
+    # Regular files must not appear in the dirs-only output.
+    assert not any("a.txt" in p for p in paths)
+    assert not any("b.txt" in p for p in paths)
+    # Directories must appear.
+    assert any(str(sub) == p for p in paths)
+    assert any(str(tmp_path) == p for p in paths)
+
+
+def test_run_du_sizes_match_lstat(tmp_path):
+    """_run_du apparent sizes match os.lstat().st_size for regular files."""
+    content = "hello world"  # 11 bytes
+    f = tmp_path / "file.txt"
+    f.write_text(content)
+
+    entries = _run_du(str(tmp_path), [], all_files=True)
+    file_entry = next(((s, p) for s, p in entries if "file.txt" in p), None)
+    assert file_entry is not None
+    size_from_du, _ = file_entry
+    assert size_from_du == f.lstat().st_size
+
+
+def test_run_du_respects_exclude_patterns(tmp_path):
+    """_run_du honours shell-style exclude patterns."""
+    (tmp_path / "visible.txt").write_text("hello")
+    (tmp_path / ".hidden").write_text("secret")
+    hidden_dir = tmp_path / ".cache"
+    hidden_dir.mkdir()
+    (hidden_dir / "data").write_text("cached")
+
+    entries = _run_du(str(tmp_path), [".*"], all_files=True)
+    paths = [p for _, p in entries]
+    assert not any(".hidden" in p for p in paths)
+    assert not any(".cache" in p for p in paths)
+    assert any("visible.txt" in p for p in paths)
+
+
+def test_run_du_nonexistent_path(tmp_path):
+    """_run_du returns an empty list (no exception) for a nonexistent path."""
+    result = _run_du(str(tmp_path / "does_not_exist"), [])
+    assert result == []
+
+
+def test_run_du_empty_directory(tmp_path):
+    """_run_du on an empty directory returns exactly one entry for the root."""
+    entries = _run_du(str(tmp_path), [], all_files=True)
+    assert len(entries) == 1
+    size, path = entries[0]
+    assert path == str(tmp_path)
+    assert size == 0
+
+
+# ---------------------------------------------------------------------------
+# get_directory_stats – no-execute subdirectory
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(os.getuid() == 0, reason="root bypasses permission checks")
+def test_get_directory_stats_no_execute_subdir(tmp_path):
+    """Stats for accessible files are still reported when a subdir lacks execute permission.
+
+    When a subdirectory has read-only permission (no execute), the tool cannot
+    stat individual files inside it.  The files that ARE accessible (in other
+    subdirectories and at the top level) must still be counted correctly.
+    """
+    # Accessible file at the top level.
+    accessible = tmp_path / "accessible.txt"
+    accessible.write_text("hello")  # 5 bytes
+
+    # Subdirectory that will have its execute bit removed.
+    restricted = tmp_path / "restricted"
+    restricted.mkdir()
+    (restricted / "secret.txt").write_text("secret data")  # 11 bytes
+
+    # Remove execute permission from the restricted subdirectory.
+    restricted.chmod(0o444)
+
+    try:
+        stats = get_directory_stats(str(tmp_path))
+        # The top-level accessible file must be counted.
+        # Files inside the restricted dir are inaccessible to both du and
+        # Python's stat(), so they may or may not be counted; the important
+        # thing is that the function does not raise and returns the files it
+        # can see.
+        assert stats["file_count"] >= 1
+        assert stats["total_size"] >= accessible.lstat().st_size
+    finally:
+        # Restore permissions so tmp_path cleanup succeeds.
+        restricted.chmod(0o755)
