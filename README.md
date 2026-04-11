@@ -69,6 +69,29 @@ python3 ontrack.py --config config.yaml
 python3 ontrack.py --config config.yaml --groups researchers
 ```
 
+## Reporting Directory & Descent
+
+In **group mode**, ontrack does not simply report statistics for the immediate subdirectory owned by a group member. Instead it descends into that subdirectory to find the *reporting directory* — the deepest directory that is actually meaningful to report.
+
+**What is a reporting directory?**  
+A directory is considered a *reporting directory* when it contains at least one *visible* file: a file whose base name is **not** matched by any pattern in the `ignore` list. File counts and sizes are then computed for that directory (recursively).
+
+**How descent works:**  
+Starting from an owned subdirectory, ontrack inspects the directory's contents:
+
+1. If the directory contains at least one visible file, descent stops and this directory is the reporting directory.
+2. If the directory contains only ignored files, only subdirectories (no visible files), or is completely empty, ontrack recurses into each non-ignored subdirectory and repeats the process.
+3. An empty directory (no files and no subdirectories) is used as the reporting directory as-is.
+4. If every subdirectory raises a permission error and cannot be scanned, the current directory is used as the fallback reporting directory.
+
+**How the ignore list affects descent:**  
+The `ignore` key accepts shell-style glob patterns matched against base names (not full paths). During descent:
+
+- Any file whose base name matches an ignore pattern is treated as invisible (it does not satisfy the "visible file" condition that stops descent).
+- Any subdirectory whose base name matches an ignore pattern is **skipped entirely** — ontrack will not descend into it, and it is never selected as a reporting directory.
+
+This means an `ignore` list such as `['.*', '*.tmp']` will cause ontrack to look past hidden directories (e.g. `.git`) and treat directories that contain only dotfiles or `.tmp` files as if they were empty, continuing descent into their non-ignored siblings.
+
 ## Example Output
 
 ```
