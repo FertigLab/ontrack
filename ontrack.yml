@@ -1,0 +1,28 @@
+# ontrack.yml — metadata store for sibling project directories
+#
+# Place this file inside a directory that contains project subdirectories.
+# When ontrack detects this file during descent, every non-ignored
+# subdirectory at this level becomes a reporting directory.
+#
+# A directory is considered "on track" when its entry contains all three
+# required fields (description, owner, created) with non-empty values.
+# Any additional fields (e.g. pi, grant, status) are optional and will
+# be included in the report output.
+
+project1:
+  description: "RNA-seq analysis of breast cancer samples"
+  owner: "alice"
+  created: "2024-01-15"
+
+project2:
+  description: "Copy number variation pipeline"
+  owner: "bob"
+  created: "2024-03-20"
+  pi: "Dr. Smith"
+  grant: "NIH-R01-CA123456"
+
+project3:
+  description: "Single-cell ATAC-seq"
+  owner: "carol"
+  created: "2025-06-01"
+  status: "active"
