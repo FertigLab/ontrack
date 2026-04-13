@@ -503,6 +503,9 @@ def report_directory(
     print(f"On track  : {'Yes' if entry['on_track'] else 'No'}")
     if "metadata" in entry:
         meta = entry["metadata"]
+        # Required fields are printed first in a defined order.  Missing
+        # required fields are silently skipped here; _is_on_track already
+        # validates their presence and will have set on_track=False accordingly.
         for field in _REQUIRED_METADATA_FIELDS:
             if field in meta:
                 print(f"{field.capitalize():<10}: {meta[field]}")
