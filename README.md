@@ -104,12 +104,12 @@ ontrack supports an optional metadata store file named **`ontrack.yml`**. When t
 ```yaml
 # ontrack.yml – place this file inside a directory that contains project subdirectories
 project1:
-  text: "RNA-seq analysis of breast cancer samples"
+  track: "rna-seq"
   owner: "alice"
   created: "2024-01-15"
 
 project2:
-  text: "Copy number variation pipeline"
+  track: "cnv-pipeline"
   owner: "bob"
   created: "2024-03-20"
   # Any extra fields (pi, grant, status, …) are allowed and will be printed
@@ -120,11 +120,25 @@ project2:
 
 | Field | Type | Purpose |
 |---|---|---|
-| `text` | string | What the data/project is |
+| `track` | string | Track name matching a key in `config.yaml`'s `track` section |
 | `owner` | string | Who is responsible for the data |
 | `created` | string (ISO date) | When the project started |
 
-A directory is **on track** when all three fields are present with non-empty values. Any additional fields are optional and will be included in both stdout and YAML output.
+A directory is **on track** when all three fields are present with non-empty values and — when the `track` section is present in `config.yaml` — the `track` value matches a recognised track name. Any additional fields are optional and will be included in both stdout and YAML output.
+
+### Configuring valid tracks (`config.yaml`)
+
+The optional `track` section in `config.yaml` defines the set of recognised track names. Each key is a track name; optional subfields (e.g. `description`, `pi`) may be added:
+
+```yaml
+track:
+  rna-seq:
+    description: RNA sequencing analysis projects
+  cnv-pipeline:
+    description: Copy number variation pipeline projects
+```
+
+When this section is present, a project's `track` value must match one of these keys for the directory to be considered *on track*.
 
 ### On-track status in output
 
@@ -136,7 +150,7 @@ Group     : researchers
 Files     : 1042
 Total size: 3.57 GB
 On track  : Yes
-Text      : RNA-seq analysis of breast cancer samples
+Track     : rna-seq
 Owner     : alice
 Created   : 2024-01-15
 ```
@@ -147,7 +161,7 @@ Created   : 2024-01-15
   username: alice
   on_track: true
   metadata:
-    text: RNA-seq analysis of breast cancer samples
+    track: rna-seq
     owner: alice
     created: '2024-01-15'
   file_count: 1042
@@ -166,7 +180,7 @@ Group     : researchers
 Files     : 1042
 Total size: 3.57 GB
 On track  : Yes
-Text      : RNA-seq analysis of breast cancer samples
+Track     : rna-seq
 Owner     : alice
 Created   : 2024-01-15
 

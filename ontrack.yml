@@ -5,24 +5,25 @@
 # subdirectory at this level becomes a reporting directory.
 #
 # A directory is considered "on track" when its entry contains all three
-# required fields (text, owner, created) with non-empty values.
+# required fields (track, owner, created) with non-empty values, and the
+# value of "track" matches a key defined in config.yaml's "track" section.
 # Any additional fields (e.g. pi, grant, status) are optional and will
 # be included in the report output.
 
 project1:
-  text: "RNA-seq analysis of breast cancer samples"
+  track: "rna-seq"
   owner: "alice"
   created: "2024-01-15"
 
 project2:
-  text: "Copy number variation pipeline"
+  track: "cnv-pipeline"
   owner: "bob"
   created: "2024-03-20"
   pi: "Dr. Smith"
   grant: "NIH-R01-CA123456"
 
 project3:
-  text: "Single-cell ATAC-seq"
+  track: "scatac-seq"
   owner: "carol"
   created: "2025-06-01"
   status: "active"

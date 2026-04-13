@@ -108,7 +108,7 @@ def get_group_members(group_name: str) -> set[str]:
 
 _ONTRACK_YML = "ontrack.yml"
 
-_REQUIRED_METADATA_FIELDS: tuple[str, ...] = ("text", "owner", "created")
+_REQUIRED_METADATA_FIELDS: tuple[str, ...] = ("track", "owner", "created")
 
 
 def _load_ontrack_yml(path: pathlib.Path) -> dict | None:
@@ -153,20 +153,32 @@ def _get_directory_metadata(directory: str) -> dict | None:
     return entry
 
 
-def _is_on_track(metadata: dict | None) -> bool:
+def _is_on_track(
+    metadata: dict | None,
+    valid_tracks: set[str] | None = None,
+) -> bool:
     """Return ``True`` when *metadata* contains all required fields with truthy values.
 
     A reporting directory is considered *on track* when it is mentioned in an
-    ``ontrack.yml`` metadata store and every one of the required fields
-    (``text``, ``owner``, ``created``) is present and non-empty.
+    ``ontrack.yml`` metadata store, every one of the required fields
+    (``track``, ``owner``, ``created``) is present and non-empty, and — when
+    *valid_tracks* is provided — the ``track`` value is one of the recognised
+    track names from the configuration.
 
     Args:
         metadata: A metadata dict returned by :func:`_get_directory_metadata`,
             or ``None`` when no entry was found.
+        valid_tracks: Optional set of track names loaded from the ``track``
+            section of ``config.yaml``.  When supplied and non-empty, the
+            ``track`` field of *metadata* must be a member of this set.
     """
     if not isinstance(metadata, dict):
         return False
-    return all(bool(metadata.get(field)) for field in _REQUIRED_METADATA_FIELDS)
+    if not all(bool(metadata.get(field)) for field in _REQUIRED_METADATA_FIELDS):
+        return False
+    if valid_tracks:
+        return metadata.get("track") in valid_tracks
+    return True
 
 
 def _find_reporting_directories(
@@ -420,6 +432,7 @@ def _build_directory_entry(
     light: bool = False,
     show_progress: bool = False,
     ignore_patterns: list[str] | None = None,
+    valid_tracks: set[str] | None = None,
 ) -> dict | None:
     """Collect stats for *path* and return them as a plain dict.
 
@@ -443,6 +456,9 @@ def _build_directory_entry(
         ignore_patterns: Shell-style glob patterns forwarded to
             :func:`get_directory_stats`; matched files and directories are
             excluded from the stats.
+        valid_tracks: Optional set of recognised track names from the
+            ``track`` section of ``config.yaml``.  Forwarded to
+            :func:`_is_on_track`.
     """
     if not pathlib.Path(path).is_dir():
         print(f"WARNING: '{path}' is not a valid directory – skipping.", file=sys.stderr)
@@ -453,7 +469,7 @@ def _build_directory_entry(
     if groups is not None:
         entry["groups"] = groups
     metadata = _get_directory_metadata(path)
-    entry["on_track"] = _is_on_track(metadata)
+    entry["on_track"] = _is_on_track(metadata, valid_tracks=valid_tracks)
     if metadata is not None:
         entry["metadata"] = metadata
     if not light:
@@ -472,6 +488,7 @@ def report_directory(
     light: bool = False,
     show_progress: bool = False,
     ignore_patterns: list[str] | None = None,
+    valid_tracks: set[str] | None = None,
 ) -> None:
     """Print a report for a single directory.
 
@@ -482,6 +499,9 @@ def report_directory(
         show_progress: Display progress bars while scanning.
         ignore_patterns: Shell-style glob patterns; matched files and
             directories are excluded from stats.
+        valid_tracks: Optional set of recognised track names from the
+            ``track`` section of ``config.yaml``.  Forwarded to
+            :func:`_build_directory_entry`.
     """
     entry = _build_directory_entry(
         path,
@@ -489,6 +509,7 @@ def report_directory(
         light=light,
         show_progress=show_progress,
         ignore_patterns=ignore_patterns,
+        valid_tracks=valid_tracks,
     )
     if entry is None:
         return
@@ -570,6 +591,10 @@ def main(
     if ignore_patterns:
         logger.info("Ignore patterns: %s", ignore_patterns)
 
+    # Build the set of valid track names from the optional ``track`` section.
+    track_config: dict = config.get("track") or {}
+    valid_tracks: set[str] | None = set(track_config.keys()) if track_config else None
+
     logger.info("Paths supplied: %s", paths)
 
     if groups is not None:
@@ -608,6 +633,7 @@ def main(
                 light=light,
                 show_progress=progress,
                 ignore_patterns=ignore_patterns,
+                valid_tracks=valid_tracks,
             )
             if entry is not None:
                 results.append(entry)
@@ -622,6 +648,7 @@ def main(
                 light=light,
                 show_progress=progress,
                 ignore_patterns=ignore_patterns,
+                valid_tracks=valid_tracks,
             )
 
 
