@@ -106,6 +106,69 @@ def get_group_members(group_name: str) -> set[str]:
     return members
 
 
+_ONTRACK_YML = "ontrack.yml"
+
+_REQUIRED_METADATA_FIELDS: tuple[str, ...] = ("description", "owner", "created")
+
+
+def _load_ontrack_yml(path: pathlib.Path) -> dict | None:
+    """Load and parse an ``ontrack.yml`` metadata store file.
+
+    Returns the parsed mapping, or ``None`` if the file is absent, cannot be
+    read, or does not contain a YAML mapping at the top level.
+
+    Args:
+        path: Full path to the ``ontrack.yml`` file to load.
+    """
+    try:
+        with open(path, "r") as fh:
+            data = yaml.safe_load(fh)
+    except OSError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    return data
+
+
+def _get_directory_metadata(directory: str) -> dict | None:
+    """Return the metadata entry for *directory* from its parent's ``ontrack.yml``.
+
+    Looks for ``ontrack.yml`` in the parent of *directory*.  If the file exists
+    and contains an entry keyed by the base name of *directory*, that entry is
+    returned.  Returns ``None`` if the store is absent, unreadable, or does not
+    contain an entry for this directory.
+
+    Args:
+        directory: Path of the reporting directory whose metadata should be
+            retrieved.
+    """
+    store_path = pathlib.Path(directory).parent / _ONTRACK_YML
+    store = _load_ontrack_yml(store_path)
+    if store is None:
+        return None
+    name = pathlib.Path(directory).name
+    entry = store.get(name)
+    if not isinstance(entry, dict):
+        return None
+    return entry
+
+
+def _is_on_track(metadata: dict | None) -> bool:
+    """Return ``True`` when *metadata* contains all required fields with truthy values.
+
+    A reporting directory is considered *on track* when it is mentioned in an
+    ``ontrack.yml`` metadata store and every one of the required fields
+    (``description``, ``owner``, ``created``) is present and non-empty.
+
+    Args:
+        metadata: A metadata dict returned by :func:`_get_directory_metadata`,
+            or ``None`` when no entry was found.
+    """
+    if not isinstance(metadata, dict):
+        return False
+    return all(bool(metadata.get(field)) for field in _REQUIRED_METADATA_FIELDS)
+
+
 def _find_reporting_directories(
     directory: str, ignore_patterns: list[str] | None = None
 ) -> list[str]:
@@ -119,6 +182,13 @@ def _find_reporting_directories(
     reporting directory.  Entries that cannot be stat'd are silently skipped.
     Subdirectories whose names match *ignore_patterns* are not descended into
     and are not considered reporting directories.
+
+    **ontrack.yml special handling:**
+    When an ``ontrack.yml`` file is found in *directory*, descent stops
+    immediately and all non-ignored subdirectories of *directory* are returned
+    as reporting directories (the directory itself is the fallback when no
+    subdirectories exist).  ``ontrack.yml`` is never treated as a visible file
+    — a directory containing only ``ontrack.yml`` continues to descend normally.
 
     Args:
         directory: Path to the directory to inspect.
@@ -134,10 +204,13 @@ def _find_reporting_directories(
 
     subdirs: list[str] = []
     has_visible_file = False
+    has_ontrack_yml = False
     for entry in entries:
         try:
             if entry.is_file():
-                if not _is_ignored(entry.name, patterns):
+                if entry.name == _ONTRACK_YML:
+                    has_ontrack_yml = True
+                elif not _is_ignored(entry.name, patterns):
                     has_visible_file = True
                     break  # no need to scan further; this dir is already a reporting dir
             elif entry.is_dir(follow_symlinks=False):
@@ -145,6 +218,11 @@ def _find_reporting_directories(
                     subdirs.append(entry.path)
         except OSError:
             pass
+
+    if has_ontrack_yml:
+        # ontrack.yml present → every subdirectory is a reporting directory;
+        # fall back to the current directory if there are none.
+        return subdirs if subdirs else [directory]
 
     if has_visible_file or not subdirs:
         # Contains at least one visible file, or is an empty/dot-files-only
@@ -374,6 +452,10 @@ def _build_directory_entry(
     entry: dict = {"directory": path, "username": username}
     if groups is not None:
         entry["groups"] = groups
+    metadata = _get_directory_metadata(path)
+    entry["on_track"] = _is_on_track(metadata)
+    if metadata is not None:
+        entry["metadata"] = metadata
     if not light:
         stats = get_directory_stats(
             path, show_progress=show_progress, ignore_patterns=ignore_patterns
@@ -418,6 +500,15 @@ def report_directory(
     if "file_count" in entry:
         print(f"Files     : {entry['file_count']}")
         print(f"Total size: {entry['total_size_human']}")
+    print(f"On track  : {'Yes' if entry['on_track'] else 'No'}")
+    if "metadata" in entry:
+        meta = entry["metadata"]
+        for field in _REQUIRED_METADATA_FIELDS:
+            if field in meta:
+                print(f"{field.capitalize():<10}: {meta[field]}")
+        for key, value in meta.items():
+            if key not in _REQUIRED_METADATA_FIELDS:
+                print(f"{key.capitalize():<10}: {value}")
     print()
 
 

@@ -92,6 +92,71 @@ The `ignore` key accepts shell-style glob patterns matched against base names (n
 
 This means an `ignore` list such as `['.*', '*.tmp']` will cause ontrack to look past hidden directories (e.g. `.git`) and treat directories that contain only dotfiles or `.tmp` files as if they were empty, continuing descent into their non-ignored siblings.
 
+## Metadata Tracking (`ontrack.yml`)
+
+ontrack supports an optional metadata store file named **`ontrack.yml`**. When this file is found in a directory during descent, it has two effects:
+
+1. **Signals reporting directories** — all non-ignored subdirectories at that level become reporting directories. Descent stops; the `ontrack.yml` file itself is never counted as a visible file.
+2. **Declares per-directory metadata** — each subdirectory can have an entry in the store. A directory is considered *on track* when it has an entry containing all three required fields.
+
+### ontrack.yml format
+
+```yaml
+# ontrack.yml – place this file inside a directory that contains project subdirectories
+project1:
+  description: "RNA-seq analysis of breast cancer samples"
+  owner: "alice"
+  created: "2024-01-15"
+
+project2:
+  description: "Copy number variation pipeline"
+  owner: "bob"
+  created: "2024-03-20"
+  # Any extra fields (pi, grant, status, …) are allowed and will be printed
+  grant: "NIH-R01-CA123456"
+```
+
+### Required metadata fields
+
+| Field | Type | Purpose |
+|---|---|---|
+| `description` | string | What the data/project is |
+| `owner` | string | Who is responsible for the data |
+| `created` | string (ISO date) | When the project started |
+
+A directory is **on track** when all three fields are present with non-empty values. Any additional fields are optional and will be included in both stdout and YAML output.
+
+### On-track status in output
+
+**stdout:**
+```
+Directory : /data/projects/alice/project1
+Username  : alice
+Group     : researchers
+Files     : 1042
+Total size: 3.57 GB
+On track  : Yes
+Description: RNA-seq analysis of breast cancer samples
+Owner     : alice
+Created   : 2024-01-15
+```
+
+**YAML (`--output`):**
+```yaml
+- directory: /data/projects/alice/project1
+  username: alice
+  on_track: true
+  metadata:
+    description: RNA-seq analysis of breast cancer samples
+    owner: alice
+    created: '2024-01-15'
+  file_count: 1042
+  total_size: 3833540608
+  total_size_human: 3.57 GB
+```
+
+When no `ontrack.yml` is found in the parent directory, `on_track` is `false` and no `metadata` key is emitted.
+
 ## Example Output
 
 ```
@@ -100,12 +165,17 @@ Username  : alice
 Group     : researchers
 Files     : 1042
 Total size: 3.57 GB
+On track  : Yes
+Description: RNA-seq analysis of breast cancer samples
+Owner     : alice
+Created   : 2024-01-15
 
 Directory : /data/projects/bob
 Username  : bob
 Group     : researchers
 Files     : 204
 Total size: 512.00 MB
+On track  : No
 ```
 
 Use `--output report.yaml` to save results as structured YAML instead.
