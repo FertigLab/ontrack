@@ -108,7 +108,7 @@ def get_group_members(group_name: str) -> set[str]:
 
 _ONTRACK_YML = "ontrack.yml"
 
-_REQUIRED_METADATA_FIELDS: tuple[str, ...] = ("track", "owner", "created")
+_REQUIRED_METADATA_FIELDS: tuple[str, ...] = ("track",)
 
 
 def _load_ontrack_yml(path: pathlib.Path) -> dict | None:
@@ -160,10 +160,9 @@ def _is_on_track(
     """Return ``True`` when *metadata* contains all required fields with truthy values.
 
     A reporting directory is considered *on track* when it is mentioned in an
-    ``ontrack.yml`` metadata store, every one of the required fields
-    (``track``, ``owner``, ``created``) is present and non-empty, and — when
-    *valid_tracks* is provided — the ``track`` value is one of the recognised
-    track names from the configuration.
+    ``ontrack.yml`` metadata store, the required field ``track`` is present and
+    non-empty, and — when *valid_tracks* is provided — the ``track`` value is
+    one of the recognised track names from the configuration.
 
     Args:
         metadata: A metadata dict returned by :func:`_get_directory_metadata`,

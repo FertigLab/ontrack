@@ -1406,19 +1406,25 @@ def test_load_ontrack_yml_unreadable(tmp_path):
 
 
 def test_is_on_track_all_required_fields():
-    """_is_on_track returns True when all required fields are present and non-empty."""
+    """_is_on_track returns True when the required track field is present and non-empty."""
     metadata = {"track": "rna-seq", "owner": "alice", "created": "2024-01-01"}
     assert _is_on_track(metadata) is True
 
 
-def test_is_on_track_missing_one_field():
-    """_is_on_track returns False when a required field is absent."""
-    metadata = {"track": "rna-seq", "owner": "alice"}  # missing 'created'
+def test_is_on_track_missing_track_field():
+    """_is_on_track returns False when the track field is absent."""
+    metadata = {"owner": "alice", "created": "2024-01-01"}  # missing 'track'
     assert _is_on_track(metadata) is False
 
 
+def test_is_on_track_missing_non_required_field():
+    """_is_on_track returns True when only optional fields (owner, created) are absent."""
+    metadata = {"track": "rna-seq"}  # owner and created are optional
+    assert _is_on_track(metadata) is True
+
+
 def test_is_on_track_empty_string_field():
-    """_is_on_track returns False when a required field is an empty string."""
+    """_is_on_track returns False when the track field is an empty string."""
     metadata = {"track": "", "owner": "alice", "created": "2024-01-01"}
     assert _is_on_track(metadata) is False
 
@@ -1619,14 +1625,14 @@ def test_build_directory_entry_not_on_track_invalid_track(tmp_path):
     assert entry["on_track"] is False
 
 
-def test_build_directory_entry_not_on_track_missing_fields(tmp_path):
-    """_build_directory_entry sets on_track=False when required metadata fields are missing."""
+def test_build_directory_entry_not_on_track_missing_track(tmp_path):
+    """_build_directory_entry sets on_track=False when the track field is missing."""
     parent = tmp_path / "parent"
     parent.mkdir()
     project = parent / "project1"
     project.mkdir()
     (parent / "ontrack.yml").write_text(
-        "project1:\n  track: rna-seq\n"  # missing owner and created
+        "project1:\n  owner: alice\n  created: '2024-01-15'\n"  # missing track
     )
 
     entry = _build_directory_entry(str(project))

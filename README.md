@@ -121,10 +121,8 @@ project2:
 | Field | Type | Purpose |
 |---|---|---|
 | `track` | string | Track name matching a key in `config.yaml`'s `track` section |
-| `owner` | string | Who is responsible for the data |
-| `created` | string (ISO date) | When the project started |
 
-A directory is **on track** when all three fields are present with non-empty values and — when the `track` section is present in `config.yaml` — the `track` value matches a recognised track name. Any additional fields are optional and will be included in both stdout and YAML output.
+A directory is **on track** when the `track` field is present with a non-empty value and — when the `track` section is present in `config.yaml` — the value matches a recognised track name. All other fields (`owner`, `created`, etc.) are optional and will be included in both stdout and YAML output when present.
 
 ### Configuring valid tracks (`config.yaml`)
 
