@@ -104,12 +104,12 @@ ontrack supports an optional metadata store file named **`ontrack.yml`**. When t
 ```yaml
 # ontrack.yml – place this file inside a directory that contains project subdirectories
 project1:
-  description: "RNA-seq analysis of breast cancer samples"
+  text: "RNA-seq analysis of breast cancer samples"
   owner: "alice"
   created: "2024-01-15"
 
 project2:
-  description: "Copy number variation pipeline"
+  text: "Copy number variation pipeline"
   owner: "bob"
   created: "2024-03-20"
   # Any extra fields (pi, grant, status, …) are allowed and will be printed
@@ -120,7 +120,7 @@ project2:
 
 | Field | Type | Purpose |
 |---|---|---|
-| `description` | string | What the data/project is |
+| `text` | string | What the data/project is |
 | `owner` | string | Who is responsible for the data |
 | `created` | string (ISO date) | When the project started |
 
@@ -136,7 +136,7 @@ Group     : researchers
 Files     : 1042
 Total size: 3.57 GB
 On track  : Yes
-Description: RNA-seq analysis of breast cancer samples
+Text      : RNA-seq analysis of breast cancer samples
 Owner     : alice
 Created   : 2024-01-15
 ```
@@ -147,7 +147,7 @@ Created   : 2024-01-15
   username: alice
   on_track: true
   metadata:
-    description: RNA-seq analysis of breast cancer samples
+    text: RNA-seq analysis of breast cancer samples
     owner: alice
     created: '2024-01-15'
   file_count: 1042
@@ -166,7 +166,7 @@ Group     : researchers
 Files     : 1042
 Total size: 3.57 GB
 On track  : Yes
-Description: RNA-seq analysis of breast cancer samples
+Text      : RNA-seq analysis of breast cancer samples
 Owner     : alice
 Created   : 2024-01-15
 
