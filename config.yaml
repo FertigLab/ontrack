@@ -17,3 +17,15 @@ groups:
 # start with a dot).
 ignore:
   - '.*'
+
+# Named tracks used to categorise project directories.  Each key is a track
+# name that can be referenced by the ``track`` field in an ``ontrack.yml``
+# metadata store.  Any number of optional subfields (e.g. description, pi)
+# may be added under each track name.
+track:
+  rna-seq:
+    description: RNA sequencing analysis projects
+  cnv-pipeline:
+    description: Copy number variation pipeline projects
+  scatac-seq:
+    description: Single-cell ATAC-seq projects

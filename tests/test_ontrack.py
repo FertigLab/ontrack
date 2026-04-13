@@ -17,7 +17,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from ontrack import (
     _build_directory_entry,
     _find_reporting_directories,
+    _get_directory_metadata,
     _is_ignored,
+    _is_on_track,
+    _load_ontrack_yml,
     _run_du,
     _uid_to_username,
     format_size,
@@ -1354,3 +1357,358 @@ def test_get_directory_stats_no_execute_subdir(tmp_path):
     finally:
         # Restore permissions so tmp_path cleanup succeeds.
         restricted.chmod(0o755)
+
+
+# ---------------------------------------------------------------------------
+# _load_ontrack_yml
+# ---------------------------------------------------------------------------
+
+
+def test_load_ontrack_yml_valid_dict(tmp_path):
+    """_load_ontrack_yml returns a dict for a well-formed YAML mapping."""
+    store = tmp_path / "ontrack.yml"
+    store.write_text("project1:\n  track: rna-seq\n  owner: alice\n  created: '2024-01-01'\n")
+    result = _load_ontrack_yml(store)
+    assert isinstance(result, dict)
+    assert "project1" in result
+    assert result["project1"]["owner"] == "alice"
+
+
+def test_load_ontrack_yml_absent(tmp_path):
+    """_load_ontrack_yml returns None when the file does not exist."""
+    result = _load_ontrack_yml(tmp_path / "ontrack.yml")
+    assert result is None
+
+
+def test_load_ontrack_yml_not_a_dict(tmp_path):
+    """_load_ontrack_yml returns None when the YAML top level is not a mapping."""
+    store = tmp_path / "ontrack.yml"
+    store.write_text("- item1\n- item2\n")
+    result = _load_ontrack_yml(store)
+    assert result is None
+
+
+def test_load_ontrack_yml_unreadable(tmp_path):
+    """_load_ontrack_yml returns None and does not raise when the file is unreadable."""
+    store = tmp_path / "ontrack.yml"
+    store.write_text("project1:\n  track: rna-seq\n")
+    store.chmod(0o000)
+    try:
+        result = _load_ontrack_yml(store)
+        assert result is None
+    finally:
+        store.chmod(0o644)
+
+
+# ---------------------------------------------------------------------------
+# _is_on_track
+# ---------------------------------------------------------------------------
+
+
+def test_is_on_track_all_required_fields():
+    """_is_on_track returns True when the required track field is present and non-empty."""
+    metadata = {"track": "rna-seq", "owner": "alice", "created": "2024-01-01"}
+    assert _is_on_track(metadata) is True
+
+
+def test_is_on_track_missing_track_field():
+    """_is_on_track returns False when the track field is absent."""
+    metadata = {"owner": "alice", "created": "2024-01-01"}  # missing 'track'
+    assert _is_on_track(metadata) is False
+
+
+def test_is_on_track_missing_non_required_field():
+    """_is_on_track returns True when only optional fields (owner, created) are absent."""
+    metadata = {"track": "rna-seq"}  # owner and created are optional
+    assert _is_on_track(metadata) is True
+
+
+def test_is_on_track_empty_string_field():
+    """_is_on_track returns False when the track field is an empty string."""
+    metadata = {"track": "", "owner": "alice", "created": "2024-01-01"}
+    assert _is_on_track(metadata) is False
+
+
+def test_is_on_track_none_input():
+    """_is_on_track returns False when metadata is None."""
+    assert _is_on_track(None) is False
+
+
+def test_is_on_track_extra_fields_ignored():
+    """_is_on_track returns True when extra fields are present alongside required ones."""
+    metadata = {
+        "track": "rna-seq",
+        "owner": "alice",
+        "created": "2024-01-01",
+        "pi": "Dr. Smith",
+        "grant": "NIH-12345",
+    }
+    assert _is_on_track(metadata) is True
+
+
+def test_is_on_track_valid_track_in_valid_tracks():
+    """_is_on_track returns True when track value is in valid_tracks."""
+    metadata = {"track": "rna-seq", "owner": "alice", "created": "2024-01-01"}
+    assert _is_on_track(metadata, valid_tracks={"rna-seq", "cnv-pipeline"}) is True
+
+
+def test_is_on_track_invalid_track_not_in_valid_tracks():
+    """_is_on_track returns False when track value is not in valid_tracks."""
+    metadata = {"track": "unknown-track", "owner": "alice", "created": "2024-01-01"}
+    assert _is_on_track(metadata, valid_tracks={"rna-seq", "cnv-pipeline"}) is False
+
+
+def test_is_on_track_no_valid_tracks_skips_track_validation():
+    """_is_on_track skips track validation when valid_tracks is None."""
+    metadata = {"track": "any-track", "owner": "alice", "created": "2024-01-01"}
+    assert _is_on_track(metadata, valid_tracks=None) is True
+
+
+# ---------------------------------------------------------------------------
+# _get_directory_metadata
+# ---------------------------------------------------------------------------
+
+
+def test_get_directory_metadata_entry_present(tmp_path):
+    """_get_directory_metadata returns the correct entry when the directory is in the store."""
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    project = parent / "project1"
+    project.mkdir()
+    store = parent / "ontrack.yml"
+    store.write_text("project1:\n  track: rna-seq\n  owner: alice\n  created: '2024-01-01'\n")
+
+    result = _get_directory_metadata(str(project))
+    assert result is not None
+    assert result["owner"] == "alice"
+    assert result["track"] == "rna-seq"
+
+
+def test_get_directory_metadata_dir_not_in_store(tmp_path):
+    """_get_directory_metadata returns None when the directory is not mentioned in the store."""
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    project = parent / "project2"
+    project.mkdir()
+    store = parent / "ontrack.yml"
+    store.write_text("project1:\n  track: rna-seq\n  owner: alice\n  created: '2024-01-01'\n")
+
+    result = _get_directory_metadata(str(project))
+    assert result is None
+
+
+def test_get_directory_metadata_no_store(tmp_path):
+    """_get_directory_metadata returns None when no ontrack.yml exists in the parent."""
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    project = parent / "project1"
+    project.mkdir()
+
+    result = _get_directory_metadata(str(project))
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
+# _find_reporting_directories – ontrack.yml handling
+# ---------------------------------------------------------------------------
+
+
+def test_find_reporting_directories_ignores_ontrack_yml_as_visible_file(tmp_path):
+    """A directory containing only ontrack.yml is not treated as a reporting directory.
+
+    ontrack.yml should not count as a visible file; descent should continue
+    into subdirectories (or the directory itself returned as fallback when empty).
+    """
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    (parent / "ontrack.yml").write_text("project1:\n  track: rna-seq\n")
+    child = parent / "project1"
+    child.mkdir()
+    (child / "data.txt").write_text("data")
+
+    result = _find_reporting_directories(str(parent))
+    # ontrack.yml present → child is returned as the reporting directory
+    assert str(child) in result
+    assert str(parent) not in result
+
+
+def test_find_reporting_directories_ontrack_yml_reports_all_subdirs(tmp_path):
+    """When ontrack.yml is present, all non-ignored subdirs become reporting directories."""
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    (parent / "ontrack.yml").write_text("p1:\n  x: 1\np2:\n  x: 2\n")
+    p1 = parent / "p1"
+    p1.mkdir()
+    p2 = parent / "p2"
+    p2.mkdir()
+
+    result = _find_reporting_directories(str(parent))
+    assert str(p1) in result
+    assert str(p2) in result
+    assert str(parent) not in result
+
+
+def test_find_reporting_directories_ontrack_yml_no_subdirs_fallback(tmp_path):
+    """When ontrack.yml is present but there are no subdirs, the directory itself is returned."""
+    d = tmp_path / "dir"
+    d.mkdir()
+    (d / "ontrack.yml").write_text("nothing:\n  x: 1\n")
+
+    result = _find_reporting_directories(str(d))
+    assert result == [str(d)]
+
+
+def test_find_reporting_directories_ontrack_yml_ignores_ignored_subdirs(tmp_path):
+    """Subdirs matching ignore_patterns are excluded even when ontrack.yml is present."""
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    (parent / "ontrack.yml").write_text("visible:\n  x: 1\n")
+    visible = parent / "visible"
+    visible.mkdir()
+    hidden = parent / ".hidden"
+    hidden.mkdir()
+
+    result = _find_reporting_directories(str(parent), ignore_patterns=[".*"])
+    assert str(visible) in result
+    assert str(hidden) not in result
+
+
+# ---------------------------------------------------------------------------
+# _build_directory_entry – on_track and metadata
+# ---------------------------------------------------------------------------
+
+
+def test_build_directory_entry_on_track(tmp_path):
+    """_build_directory_entry sets on_track=True and includes metadata when fully populated."""
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    project = parent / "project1"
+    project.mkdir()
+    (parent / "ontrack.yml").write_text(
+        "project1:\n  track: rna-seq\n  owner: alice\n  created: '2024-01-15'\n"
+    )
+
+    entry = _build_directory_entry(str(project))
+    assert entry is not None
+    assert entry["on_track"] is True
+    assert "metadata" in entry
+    assert entry["metadata"]["owner"] == "alice"
+
+
+def test_build_directory_entry_on_track_with_valid_tracks(tmp_path):
+    """_build_directory_entry sets on_track=True when track value is in valid_tracks."""
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    project = parent / "project1"
+    project.mkdir()
+    (parent / "ontrack.yml").write_text(
+        "project1:\n  track: rna-seq\n  owner: alice\n  created: '2024-01-15'\n"
+    )
+
+    entry = _build_directory_entry(str(project), valid_tracks={"rna-seq", "cnv-pipeline"})
+    assert entry is not None
+    assert entry["on_track"] is True
+
+
+def test_build_directory_entry_not_on_track_invalid_track(tmp_path):
+    """_build_directory_entry sets on_track=False when track value is not in valid_tracks."""
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    project = parent / "project1"
+    project.mkdir()
+    (parent / "ontrack.yml").write_text(
+        "project1:\n  track: unknown\n  owner: alice\n  created: '2024-01-15'\n"
+    )
+
+    entry = _build_directory_entry(str(project), valid_tracks={"rna-seq", "cnv-pipeline"})
+    assert entry is not None
+    assert entry["on_track"] is False
+
+
+def test_build_directory_entry_not_on_track_missing_track(tmp_path):
+    """_build_directory_entry sets on_track=False when the track field is missing."""
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    project = parent / "project1"
+    project.mkdir()
+    (parent / "ontrack.yml").write_text(
+        "project1:\n  owner: alice\n  created: '2024-01-15'\n"  # missing track
+    )
+
+    entry = _build_directory_entry(str(project))
+    assert entry is not None
+    assert entry["on_track"] is False
+    assert "metadata" in entry
+
+
+def test_build_directory_entry_not_on_track_not_in_store(tmp_path):
+    """_build_directory_entry sets on_track=False when the directory is not in the store."""
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    project = parent / "project1"
+    project.mkdir()
+    (parent / "ontrack.yml").write_text("other_project:\n  track: rna-seq\n  owner: bob\n  created: '2024-01-01'\n")
+
+    entry = _build_directory_entry(str(project))
+    assert entry is not None
+    assert entry["on_track"] is False
+    assert "metadata" not in entry
+
+
+def test_build_directory_entry_on_track_false_no_store(tmp_path):
+    """_build_directory_entry sets on_track=False and no metadata when no store exists."""
+    entry = _build_directory_entry(str(tmp_path))
+    assert entry is not None
+    assert entry["on_track"] is False
+    assert "metadata" not in entry
+
+
+# ---------------------------------------------------------------------------
+# report_directory – on_track printing
+# ---------------------------------------------------------------------------
+
+
+def test_report_directory_prints_on_track_yes(tmp_path, capsys):
+    """report_directory prints 'On track  : Yes' when metadata is fully populated."""
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    project = parent / "myproject"
+    project.mkdir()
+    (parent / "ontrack.yml").write_text(
+        "myproject:\n  track: rna-seq\n  owner: alice\n  created: '2024-06-01'\n"
+    )
+
+    report_directory(str(project))
+    captured = capsys.readouterr()
+    assert "On track  : Yes" in captured.out
+    assert "Track" in captured.out
+    assert "rna-seq" in captured.out
+    assert "Owner" in captured.out
+    assert "alice" in captured.out
+
+
+def test_report_directory_prints_on_track_no(tmp_path, capsys):
+    """report_directory prints 'On track  : No' when no metadata store is present."""
+    report_directory(str(tmp_path))
+    captured = capsys.readouterr()
+    assert "On track  : No" in captured.out
+
+
+def test_report_directory_prints_extra_metadata_fields(tmp_path, capsys):
+    """report_directory prints extra metadata fields beyond the required three."""
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    project = parent / "proj"
+    project.mkdir()
+    (parent / "ontrack.yml").write_text(
+        "proj:\n"
+        "  track: rna-seq\n"
+        "  owner: bob\n"
+        "  created: '2025-01-01'\n"
+        "  grant: NIH-12345\n"
+    )
+
+    report_directory(str(project))
+    captured = capsys.readouterr()
+    assert "Grant" in captured.out
+    assert "NIH-12345" in captured.out
