@@ -784,7 +784,24 @@ def main(
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     parser = argparse.ArgumentParser(
-        description="Report directory statistics for locations defined in a config YAML."
+        description=(
+            "Scan directory trees and report file statistics for locations defined\n"
+            "in a YAML configuration file.\n\n"
+            "Two operating modes are supported:\n\n"
+            "  Default mode  – report stats directly for each configured path.\n"
+            "  Group mode    – for each configured path, find and report subdirectories\n"
+            "                  owned by members of the specified Unix group(s)."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "examples:\n"
+            "  %(prog)s --config config.yaml\n"
+            "  %(prog)s --config config.yaml --groups mygroup\n"
+            "  %(prog)s --config config.yaml --groups mygroup --light\n"
+            "  %(prog)s --config config.yaml --groups mygroup --report\n"
+            "  %(prog)s --config config.yaml --output report.yaml\n"
+            "  %(prog)s --config config.yaml --progress\n"
+        ),
     )
     parser.add_argument(
         "--config",
@@ -826,10 +843,13 @@ if __name__ == "__main__":
         action="store_true",
         default=False,
         help=(
-            "Output on-track statistics (per-user share and total average) instead of "
-            "the list of reporting directories."
+            "Output on-track statistics (per-track counts, per-user share, and total "
+            "average) instead of the list of reporting directories."
         ),
     )
+    if not sys.argv[1:]:
+        parser.print_help()
+        sys.exit(0)
     args = parser.parse_args()
     main(
         args.config,

@@ -2033,3 +2033,57 @@ def test_main_report_on_track_counted(tmp_path, capsys):
     # The project is on track, so on_track count should be 1/1
     assert "1/1" in captured.out
     assert "100.0%" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# __main__ CLI entry-point: no-args and help flags
+# ---------------------------------------------------------------------------
+
+
+def test_main_entrypoint_no_args_prints_help(capsys, monkeypatch):
+    """Running the script with no arguments prints help and exits with code 0."""
+    import importlib
+    import runpy
+
+    monkeypatch.setattr(sys, "argv", ["ontrack.py"])
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            os.path.join(os.path.dirname(__file__), "..", "ontrack.py"),
+            run_name="__main__",
+        )
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert "usage:" in captured.out.lower()
+    assert "--config" in captured.out
+
+
+def test_main_entrypoint_help_flag_prints_help(capsys, monkeypatch):
+    """Running the script with -h prints help and exits with code 0."""
+    import runpy
+
+    monkeypatch.setattr(sys, "argv", ["ontrack.py", "-h"])
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            os.path.join(os.path.dirname(__file__), "..", "ontrack.py"),
+            run_name="__main__",
+        )
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert "usage:" in captured.out.lower()
+    assert "--config" in captured.out
+
+
+def test_main_entrypoint_long_help_flag_prints_help(capsys, monkeypatch):
+    """Running the script with --help prints help and exits with code 0."""
+    import runpy
+
+    monkeypatch.setattr(sys, "argv", ["ontrack.py", "--help"])
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            os.path.join(os.path.dirname(__file__), "..", "ontrack.py"),
+            run_name="__main__",
+        )
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert "usage:" in captured.out.lower()
+    assert "examples:" in captured.out
