@@ -596,18 +596,18 @@ def print_report(report_data: dict) -> None:
         report_data: A dict as returned by :func:`compute_report`.
     """
     per_user: dict[str, dict] = report_data["per_user"]
-    col_width = 20
+    username_col_width = 20
     for username in sorted(per_user):
         stats = per_user[username]
         share_pct = stats["share"] * 100
         print(
-            f"{username:<{col_width}}: {stats['on_track']}/{stats['total']}"
+            f"{username:<{username_col_width}}: {stats['on_track']}/{stats['total']}"
             f" ({share_pct:.1f}%)"
         )
     print()
     avg_pct = report_data["average_share"] * 100
     print(
-        f"{'Total average':<{col_width}}: {report_data['total_on_track']}"
+        f"{'Total average':<{username_col_width}}: {report_data['total_on_track']}"
         f"/{report_data['total']} ({avg_pct:.1f}%)"
     )
 
@@ -712,7 +712,7 @@ def main(
                 path,
                 groups=groups,
                 light=True,
-                show_progress=False,
+                show_progress=progress,
                 ignore_patterns=ignore_patterns,
                 valid_tracks=valid_tracks,
             )
