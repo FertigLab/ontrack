@@ -23,6 +23,7 @@ from ontrack import (
     _load_ontrack_yml,
     _run_du,
     _uid_to_username,
+    compute_report,
     format_size,
     get_directory_stats,
     get_group_members,
@@ -30,6 +31,7 @@ from ontrack import (
     get_username,
     load_config,
     main,
+    print_report,
     report_directory,
 )
 
@@ -1712,3 +1714,375 @@ def test_report_directory_prints_extra_metadata_fields(tmp_path, capsys):
     captured = capsys.readouterr()
     assert "Grant" in captured.out
     assert "NIH-12345" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# compute_report
+# ---------------------------------------------------------------------------
+
+
+def test_compute_report_empty():
+    """compute_report on an empty list returns zero counts and zero share."""
+    result = compute_report([])
+    assert result["total"] == 0
+    assert result["total_on_track"] == 0
+    assert result["average_share"] == 0.0
+    assert result["per_user"] == {}
+    assert result["per_track"] == {}
+
+
+def test_compute_report_all_on_track():
+    """compute_report when every entry is on track gives 100% share."""
+    entries = [
+        {"username": "alice", "on_track": True, "metadata": {"track": "rna-seq"}},
+        {"username": "alice", "on_track": True, "metadata": {"track": "rna-seq"}},
+    ]
+    result = compute_report(entries)
+    assert result["total"] == 2
+    assert result["total_on_track"] == 2
+    assert result["average_share"] == 1.0
+    assert result["per_user"]["alice"]["on_track"] == 2
+    assert result["per_user"]["alice"]["total"] == 2
+    assert result["per_user"]["alice"]["share"] == 1.0
+    assert result["per_track"]["rna-seq"] == 2
+
+
+def test_compute_report_none_on_track():
+    """compute_report when no entry is on track gives 0% share."""
+    entries = [
+        {"username": "bob", "on_track": False},
+        {"username": "bob", "on_track": False},
+    ]
+    result = compute_report(entries)
+    assert result["total_on_track"] == 0
+    assert result["average_share"] == 0.0
+    assert result["per_user"]["bob"]["share"] == 0.0
+    # No metadata → counted as untracked (None key)
+    assert result["per_track"][None] == 2
+
+
+def test_compute_report_mixed_users():
+    """compute_report computes per-user and overall stats correctly."""
+    entries = [
+        {"username": "alice", "on_track": True},
+        {"username": "alice", "on_track": False},
+        {"username": "bob", "on_track": True},
+    ]
+    result = compute_report(entries)
+    assert result["total"] == 3
+    assert result["total_on_track"] == 2
+    assert abs(result["average_share"] - 2 / 3) < 1e-9
+
+    alice = result["per_user"]["alice"]
+    assert alice["on_track"] == 1
+    assert alice["total"] == 2
+    assert alice["share"] == 0.5
+
+    bob = result["per_user"]["bob"]
+    assert bob["on_track"] == 1
+    assert bob["total"] == 1
+    assert bob["share"] == 1.0
+
+
+def test_compute_report_missing_username():
+    """compute_report handles entries with missing or empty username."""
+    entries = [
+        {"on_track": True},
+        {"username": "", "on_track": False},
+    ]
+    result = compute_report(entries)
+    assert result["total"] == 2
+    assert result["total_on_track"] == 1
+    assert "" in result["per_user"]
+    assert result["per_user"][""]["total"] == 2
+
+
+def test_compute_report_per_track_counts():
+    """compute_report tallies per_track correctly across multiple track values."""
+    entries = [
+        {"username": "alice", "on_track": True, "metadata": {"track": "rna-seq"}},
+        {"username": "alice", "on_track": True, "metadata": {"track": "rna-seq"}},
+        {"username": "bob", "on_track": True, "metadata": {"track": "cnv-pipeline"}},
+        {"username": "carol", "on_track": False},
+    ]
+    result = compute_report(entries)
+    assert result["per_track"]["rna-seq"] == 2
+    assert result["per_track"]["cnv-pipeline"] == 1
+    assert result["per_track"][None] == 1
+
+
+def test_compute_report_per_track_no_metadata_key():
+    """Entries whose metadata lacks a 'track' key are counted as untracked."""
+    entries = [
+        {"username": "alice", "on_track": False, "metadata": {"owner": "PI"}},
+    ]
+    result = compute_report(entries)
+    assert result["per_track"][None] == 1
+
+
+def test_compute_report_output_file_includes_per_track(tmp_path):
+    """main with report=True and output writes per_track to the YAML file."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    project = data_dir / "project"
+    project.mkdir()
+    (project / "file.txt").write_text("data")
+    (data_dir / "ontrack.yml").write_text("project:\n  track: rna-seq\n")
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        f"paths:\n  - {project}\n"
+        "track:\n  rna-seq:\n"
+    )
+
+    output_file = str(tmp_path / "stats.yaml")
+    main(str(config_file), report=True, output=output_file)
+
+    with open(output_file) as fh:
+        data = yaml.safe_load(fh)
+
+    assert "per_track" in data
+
+
+# ---------------------------------------------------------------------------
+# print_report
+# ---------------------------------------------------------------------------
+
+
+def test_print_report_format(capsys):
+    """print_report outputs track counts, per-user lines, and a total average line."""
+    report_data = {
+        "per_track": {"rna-seq": 3, "cnv-pipeline": 1},
+        "per_user": {
+            "alice": {"on_track": 2, "total": 4, "share": 0.5},
+            "bob": {"on_track": 1, "total": 1, "share": 1.0},
+        },
+        "total_on_track": 3,
+        "total": 5,
+        "average_share": 0.6,
+    }
+    print_report(report_data)
+    captured = capsys.readouterr()
+    # Track section
+    assert "rna-seq" in captured.out
+    assert "cnv-pipeline" in captured.out
+    # Per-user section
+    assert "alice" in captured.out
+    assert "2/4" in captured.out
+    assert "50.0%" in captured.out
+    assert "bob" in captured.out
+    assert "1/1" in captured.out
+    assert "100.0%" in captured.out
+    assert "Total average" in captured.out
+    assert "3/5" in captured.out
+    assert "60.0%" in captured.out
+
+
+def test_print_report_sorted_users(capsys):
+    """print_report outputs users in alphabetical order, after the track section."""
+    report_data = {
+        "per_track": {},
+        "per_user": {
+            "zara": {"on_track": 0, "total": 1, "share": 0.0},
+            "anna": {"on_track": 1, "total": 1, "share": 1.0},
+        },
+        "total_on_track": 1,
+        "total": 2,
+        "average_share": 0.5,
+    }
+    print_report(report_data)
+    captured = capsys.readouterr()
+    lines = [line for line in captured.out.splitlines() if line.strip()]
+    user_lines = [l for l in lines if "Total average" not in l]
+    assert user_lines[0].startswith("anna")
+    assert user_lines[1].startswith("zara")
+
+
+def test_print_report_empty(capsys):
+    """print_report on an empty report outputs only the total average line."""
+    report_data = {
+        "per_track": {},
+        "per_user": {},
+        "total_on_track": 0,
+        "total": 0,
+        "average_share": 0.0,
+    }
+    print_report(report_data)
+    captured = capsys.readouterr()
+    assert "Total average" in captured.out
+    assert "0/0" in captured.out
+    assert "0.0%" in captured.out
+
+
+def test_print_report_untracked_label(capsys):
+    """print_report shows '(untracked)' for directories without a track."""
+    report_data = {
+        "per_track": {None: 2, "rna-seq": 1},
+        "per_user": {"alice": {"on_track": 1, "total": 3, "share": 1 / 3}},
+        "total_on_track": 1,
+        "total": 3,
+        "average_share": 1 / 3,
+    }
+    print_report(report_data)
+    captured = capsys.readouterr()
+    assert "(untracked)" in captured.out
+    assert "rna-seq" in captured.out
+
+
+def test_print_report_tracks_before_users(capsys):
+    """Track counts appear before per-user lines in the output."""
+    report_data = {
+        "per_track": {"rna-seq": 1},
+        "per_user": {"alice": {"on_track": 1, "total": 1, "share": 1.0}},
+        "total_on_track": 1,
+        "total": 1,
+        "average_share": 1.0,
+    }
+    print_report(report_data)
+    captured = capsys.readouterr()
+    rna_pos = captured.out.index("rna-seq")
+    alice_pos = captured.out.index("alice")
+    assert rna_pos < alice_pos
+
+
+# ---------------------------------------------------------------------------
+# main with --report flag
+# ---------------------------------------------------------------------------
+
+
+def test_main_report_default_mode(tmp_path, capsys):
+    """main with report=True prints on-track stats instead of directory list."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "file.txt").write_text("hello world")
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(f"paths:\n  - {data_dir}\n")
+
+    main(str(config_file), report=True)
+    captured = capsys.readouterr()
+    # Stats summary present
+    assert "Total average" in captured.out
+    # Individual directory listing absent
+    assert "Directory" not in captured.out
+    assert "Files" not in captured.out
+
+
+def test_main_report_group_mode(tmp_path, capsys):
+    """main with report=True and groups outputs stats for group subdirectories."""
+    current_gid = os.getgid()
+    group_name = grp.getgrgid(current_gid).gr_name
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    user_subdir = data_dir / "user_dir"
+    user_subdir.mkdir()
+    (user_subdir / "file.txt").write_text("content")
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(f"paths:\n  - {data_dir}\n")
+
+    main(str(config_file), groups=[group_name], report=True)
+    captured = capsys.readouterr()
+    assert "Total average" in captured.out
+    assert "Directory" not in captured.out
+
+
+def test_main_report_output_file(tmp_path):
+    """main with report=True and output writes YAML stats to the output file."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "file.txt").write_text("hello")
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(f"paths:\n  - {data_dir}\n")
+
+    output_file = str(tmp_path / "stats.yaml")
+    main(str(config_file), report=True, output=output_file)
+
+    with open(output_file) as fh:
+        data = yaml.safe_load(fh)
+
+    assert "total" in data
+    assert "total_on_track" in data
+    assert "average_share" in data
+    assert "per_user" in data
+    assert "per_track" in data
+
+
+def test_main_report_on_track_counted(tmp_path, capsys):
+    """main with report=True counts on-track directories correctly."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    project = data_dir / "project"
+    project.mkdir()
+    (project / "file.txt").write_text("data")
+
+    # Write an ontrack.yml in data_dir marking 'project' as on track.
+    (data_dir / "ontrack.yml").write_text("project:\n  track: rna-seq\n")
+
+    # Use data_dir as a parent path; project is the reporting directory via ontrack.yml.
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        f"paths:\n  - {project}\n"
+        "track:\n  rna-seq:\n"
+    )
+
+    main(str(config_file), report=True)
+    captured = capsys.readouterr()
+    # The project is on track, so on_track count should be 1/1
+    assert "1/1" in captured.out
+    assert "100.0%" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# __main__ CLI entry-point: no-args and help flags
+# ---------------------------------------------------------------------------
+
+
+def test_main_entrypoint_no_args_prints_help(capsys, monkeypatch):
+    """Running the script with no arguments prints help and exits with code 0."""
+    import runpy
+
+    monkeypatch.setattr(sys, "argv", ["ontrack.py"])
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            os.path.join(os.path.dirname(__file__), "..", "ontrack.py"),
+            run_name="__main__",
+        )
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert "usage:" in captured.out.lower()
+    assert "--config" in captured.out
+
+
+def test_main_entrypoint_help_flag_prints_help(capsys, monkeypatch):
+    """Running the script with -h prints help and exits with code 0."""
+    import runpy
+
+    monkeypatch.setattr(sys, "argv", ["ontrack.py", "-h"])
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            os.path.join(os.path.dirname(__file__), "..", "ontrack.py"),
+            run_name="__main__",
+        )
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert "usage:" in captured.out.lower()
+    assert "--config" in captured.out
+
+
+def test_main_entrypoint_long_help_flag_prints_help(capsys, monkeypatch):
+    """Running the script with --help prints help and exits with code 0."""
+    import runpy
+
+    monkeypatch.setattr(sys, "argv", ["ontrack.py", "--help"])
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            os.path.join(os.path.dirname(__file__), "..", "ontrack.py"),
+            run_name="__main__",
+        )
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert "usage:" in captured.out.lower()
+    assert "examples:" in captured.out
