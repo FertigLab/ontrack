@@ -535,6 +535,83 @@ def report_directory(
     print()
 
 
+def compute_report(entries: list[dict]) -> dict:
+    """Compute on-track statistics from a list of directory entries.
+
+    For each owner username, calculates the number of on-track directories,
+    the total number of directories, and the share (fraction) that are on track.
+    Also computes the overall average on-track share across all entries.
+
+    Args:
+        entries: List of directory entry dicts, each containing at least
+            ``username`` (str) and ``on_track`` (bool) keys, as returned by
+            :func:`_build_directory_entry`.
+
+    Returns:
+        A dict with the following keys:
+
+        - ``per_user`` (dict): Maps each username to a nested dict with keys
+          ``on_track`` (int), ``total`` (int), and ``share`` (float 0–1).
+        - ``total_on_track`` (int): Count of all on-track entries.
+        - ``total`` (int): Total number of entries.
+        - ``average_share`` (float): Overall fraction of on-track entries
+          (``total_on_track / total``), or ``0.0`` when *entries* is empty.
+    """
+    per_user: dict[str, dict] = {}
+    total_on_track = 0
+    total = 0
+
+    for entry in entries:
+        username: str = entry.get("username") or ""
+        on_track: bool = bool(entry.get("on_track", False))
+        if username not in per_user:
+            per_user[username] = {"on_track": 0, "total": 0}
+        per_user[username]["total"] += 1
+        total += 1
+        if on_track:
+            per_user[username]["on_track"] += 1
+            total_on_track += 1
+
+    for stats in per_user.values():
+        stats["share"] = stats["on_track"] / stats["total"] if stats["total"] > 0 else 0.0
+
+    average_share = total_on_track / total if total > 0 else 0.0
+
+    return {
+        "per_user": per_user,
+        "total_on_track": total_on_track,
+        "total": total,
+        "average_share": average_share,
+    }
+
+
+def print_report(report_data: dict) -> None:
+    """Print the on-track report to stdout.
+
+    Outputs one line per user sorted alphabetically, showing on-track count,
+    total count, and percentage.  A final summary line shows the overall
+    average.
+
+    Args:
+        report_data: A dict as returned by :func:`compute_report`.
+    """
+    per_user: dict[str, dict] = report_data["per_user"]
+    col_width = 20
+    for username in sorted(per_user):
+        stats = per_user[username]
+        share_pct = stats["share"] * 100
+        print(
+            f"{username:<{col_width}}: {stats['on_track']}/{stats['total']}"
+            f" ({share_pct:.1f}%)"
+        )
+    print()
+    avg_pct = report_data["average_share"] * 100
+    print(
+        f"{'Total average':<{col_width}}: {report_data['total_on_track']}"
+        f"/{report_data['total']} ({avg_pct:.1f}%)"
+    )
+
+
 def load_config(config_path: str) -> dict:
     """Load and return the YAML configuration file."""
     with open(config_path, "r") as fh:
@@ -563,6 +640,7 @@ def main(
     light: bool = False,
     progress: bool = False,
     output: str | None = None,
+    report: bool = False,
 ) -> None:
     """Run ontrack with the given options.
 
@@ -573,6 +651,10 @@ def main(
         light: When ``True``, skip file-count and size scanning.
         progress: Display tqdm progress bars while scanning.
         output: Write YAML report to this path instead of printing to stdout.
+        report: When ``True``, output on-track statistics (per-user share and
+            total average) instead of the list of reporting directories.  When
+            *output* is also given the statistics are written as YAML to that
+            file; otherwise they are printed to stdout.
     """
     config = load_config(config_path)
     paths: list[str] = config.get("paths", [])
@@ -623,7 +705,27 @@ def main(
         else paths_to_process
     )
 
-    if output is not None:
+    if report:
+        entries = []
+        for path in iterator:
+            entry = _build_directory_entry(
+                path,
+                groups=groups,
+                light=True,
+                show_progress=False,
+                ignore_patterns=ignore_patterns,
+                valid_tracks=valid_tracks,
+            )
+            if entry is not None:
+                entries.append(entry)
+        report_data = compute_report(entries)
+        if output is not None:
+            with open(output, "w") as fh:
+                yaml.dump(report_data, fh, default_flow_style=False, allow_unicode=True)
+            logger.info("Report written to %s", output)
+        else:
+            print_report(report_data)
+    elif output is not None:
         results = []
         for path in iterator:
             entry = _build_directory_entry(
@@ -691,6 +793,15 @@ if __name__ == "__main__":
         metavar="FILE",
         help="Write the report as YAML to FILE instead of printing to stdout.",
     )
+    parser.add_argument(
+        "--report",
+        action="store_true",
+        default=False,
+        help=(
+            "Output on-track statistics (per-user share and total average) instead of "
+            "the list of reporting directories."
+        ),
+    )
     args = parser.parse_args()
     main(
         args.config,
@@ -698,4 +809,5 @@ if __name__ == "__main__":
         light=args.light,
         progress=args.progress,
         output=args.output,
+        report=args.report,
     )

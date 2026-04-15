@@ -23,6 +23,7 @@ from ontrack import (
     _load_ontrack_yml,
     _run_du,
     _uid_to_username,
+    compute_report,
     format_size,
     get_directory_stats,
     get_group_members,
@@ -30,6 +31,7 @@ from ontrack import (
     get_username,
     load_config,
     main,
+    print_report,
     report_directory,
 )
 
@@ -1712,3 +1714,232 @@ def test_report_directory_prints_extra_metadata_fields(tmp_path, capsys):
     captured = capsys.readouterr()
     assert "Grant" in captured.out
     assert "NIH-12345" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# compute_report
+# ---------------------------------------------------------------------------
+
+
+def test_compute_report_empty():
+    """compute_report on an empty list returns zero counts and zero share."""
+    result = compute_report([])
+    assert result["total"] == 0
+    assert result["total_on_track"] == 0
+    assert result["average_share"] == 0.0
+    assert result["per_user"] == {}
+
+
+def test_compute_report_all_on_track():
+    """compute_report when every entry is on track gives 100% share."""
+    entries = [
+        {"username": "alice", "on_track": True},
+        {"username": "alice", "on_track": True},
+    ]
+    result = compute_report(entries)
+    assert result["total"] == 2
+    assert result["total_on_track"] == 2
+    assert result["average_share"] == 1.0
+    assert result["per_user"]["alice"]["on_track"] == 2
+    assert result["per_user"]["alice"]["total"] == 2
+    assert result["per_user"]["alice"]["share"] == 1.0
+
+
+def test_compute_report_none_on_track():
+    """compute_report when no entry is on track gives 0% share."""
+    entries = [
+        {"username": "bob", "on_track": False},
+        {"username": "bob", "on_track": False},
+    ]
+    result = compute_report(entries)
+    assert result["total_on_track"] == 0
+    assert result["average_share"] == 0.0
+    assert result["per_user"]["bob"]["share"] == 0.0
+
+
+def test_compute_report_mixed_users():
+    """compute_report computes per-user and overall stats correctly."""
+    entries = [
+        {"username": "alice", "on_track": True},
+        {"username": "alice", "on_track": False},
+        {"username": "bob", "on_track": True},
+    ]
+    result = compute_report(entries)
+    assert result["total"] == 3
+    assert result["total_on_track"] == 2
+    assert abs(result["average_share"] - 2 / 3) < 1e-9
+
+    alice = result["per_user"]["alice"]
+    assert alice["on_track"] == 1
+    assert alice["total"] == 2
+    assert alice["share"] == 0.5
+
+    bob = result["per_user"]["bob"]
+    assert bob["on_track"] == 1
+    assert bob["total"] == 1
+    assert bob["share"] == 1.0
+
+
+def test_compute_report_missing_username():
+    """compute_report handles entries with missing or empty username."""
+    entries = [
+        {"on_track": True},
+        {"username": "", "on_track": False},
+    ]
+    result = compute_report(entries)
+    assert result["total"] == 2
+    assert result["total_on_track"] == 1
+    assert "" in result["per_user"]
+    assert result["per_user"][""]["total"] == 2
+
+
+# ---------------------------------------------------------------------------
+# print_report
+# ---------------------------------------------------------------------------
+
+
+def test_print_report_format(capsys):
+    """print_report outputs one line per user and a total average line."""
+    report_data = {
+        "per_user": {
+            "alice": {"on_track": 2, "total": 4, "share": 0.5},
+            "bob": {"on_track": 1, "total": 1, "share": 1.0},
+        },
+        "total_on_track": 3,
+        "total": 5,
+        "average_share": 0.6,
+    }
+    print_report(report_data)
+    captured = capsys.readouterr()
+    assert "alice" in captured.out
+    assert "2/4" in captured.out
+    assert "50.0%" in captured.out
+    assert "bob" in captured.out
+    assert "1/1" in captured.out
+    assert "100.0%" in captured.out
+    assert "Total average" in captured.out
+    assert "3/5" in captured.out
+    assert "60.0%" in captured.out
+
+
+def test_print_report_sorted_users(capsys):
+    """print_report outputs users in alphabetical order."""
+    report_data = {
+        "per_user": {
+            "zara": {"on_track": 0, "total": 1, "share": 0.0},
+            "anna": {"on_track": 1, "total": 1, "share": 1.0},
+        },
+        "total_on_track": 1,
+        "total": 2,
+        "average_share": 0.5,
+    }
+    print_report(report_data)
+    captured = capsys.readouterr()
+    lines = [line for line in captured.out.splitlines() if line.strip()]
+    user_lines = [l for l in lines if "Total average" not in l]
+    assert user_lines[0].startswith("anna")
+    assert user_lines[1].startswith("zara")
+
+
+def test_print_report_empty(capsys):
+    """print_report on an empty report outputs only the total average line."""
+    report_data = {
+        "per_user": {},
+        "total_on_track": 0,
+        "total": 0,
+        "average_share": 0.0,
+    }
+    print_report(report_data)
+    captured = capsys.readouterr()
+    assert "Total average" in captured.out
+    assert "0/0" in captured.out
+    assert "0.0%" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# main with --report flag
+# ---------------------------------------------------------------------------
+
+
+def test_main_report_default_mode(tmp_path, capsys):
+    """main with report=True prints on-track stats instead of directory list."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "file.txt").write_text("hello world")
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(f"paths:\n  - {data_dir}\n")
+
+    main(str(config_file), report=True)
+    captured = capsys.readouterr()
+    # Stats summary present
+    assert "Total average" in captured.out
+    # Individual directory listing absent
+    assert "Directory" not in captured.out
+    assert "Files" not in captured.out
+
+
+def test_main_report_group_mode(tmp_path, capsys):
+    """main with report=True and groups outputs stats for group subdirectories."""
+    current_gid = os.getgid()
+    group_name = grp.getgrgid(current_gid).gr_name
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    user_subdir = data_dir / "user_dir"
+    user_subdir.mkdir()
+    (user_subdir / "file.txt").write_text("content")
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(f"paths:\n  - {data_dir}\n")
+
+    main(str(config_file), groups=[group_name], report=True)
+    captured = capsys.readouterr()
+    assert "Total average" in captured.out
+    assert "Directory" not in captured.out
+
+
+def test_main_report_output_file(tmp_path):
+    """main with report=True and output writes YAML stats to the output file."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "file.txt").write_text("hello")
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(f"paths:\n  - {data_dir}\n")
+
+    output_file = str(tmp_path / "stats.yaml")
+    main(str(config_file), report=True, output=output_file)
+
+    with open(output_file) as fh:
+        data = yaml.safe_load(fh)
+
+    assert "total" in data
+    assert "total_on_track" in data
+    assert "average_share" in data
+    assert "per_user" in data
+
+
+def test_main_report_on_track_counted(tmp_path, capsys):
+    """main with report=True counts on-track directories correctly."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    project = data_dir / "project"
+    project.mkdir()
+    (project / "file.txt").write_text("data")
+
+    # Write an ontrack.yml in data_dir marking 'project' as on track.
+    (data_dir / "ontrack.yml").write_text("project:\n  track: rna-seq\n")
+
+    # Use data_dir as a parent path; project is the reporting directory via ontrack.yml.
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        f"paths:\n  - {project}\n"
+        "track:\n  rna-seq:\n"
+    )
+
+    main(str(config_file), report=True)
+    captured = capsys.readouterr()
+    # The project is on track, so on_track count should be 1/1
+    assert "1/1" in captured.out
+    assert "100.0%" in captured.out
