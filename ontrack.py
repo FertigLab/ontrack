@@ -540,16 +540,22 @@ def compute_report(entries: list[dict]) -> dict:
 
     For each owner username, calculates the number of on-track directories,
     the total number of directories, and the share (fraction) that are on track.
-    Also computes the overall average on-track share across all entries.
+    Also computes the overall average on-track share across all entries, and
+    counts the number of reporting directories per track value.
 
     Args:
         entries: List of directory entry dicts, each containing at least
             ``username`` (str) and ``on_track`` (bool) keys, as returned by
-            :func:`_build_directory_entry`.
+            :func:`_build_directory_entry`.  Entries may also contain a
+            ``metadata`` dict with a ``track`` key.
 
     Returns:
         A dict with the following keys:
 
+        - ``per_track`` (dict): Maps each track name (str) to the count (int)
+          of reporting directories carrying that track value.  Directories
+          without a ``track`` field in their metadata are counted under the
+          key ``None``.
         - ``per_user`` (dict): Maps each username to a nested dict with keys
           ``on_track`` (int), ``total`` (int), and ``share`` (float 0–1).
         - ``total_on_track`` (int): Count of all on-track entries.
@@ -558,12 +564,19 @@ def compute_report(entries: list[dict]) -> dict:
           (``total_on_track / total``), or ``0.0`` when *entries* is empty.
     """
     per_user: dict[str, dict] = {}
+    per_track: dict[str | None, int] = {}
     total_on_track = 0
     total = 0
 
     for entry in entries:
         username: str = entry.get("username") or ""
         on_track: bool = bool(entry.get("on_track", False))
+
+        # Track counts — use the raw metadata track value (may be None).
+        metadata = entry.get("metadata")
+        track: str | None = metadata.get("track") if isinstance(metadata, dict) else None
+        per_track[track] = per_track.get(track, 0) + 1
+
         if username not in per_user:
             per_user[username] = {"on_track": 0, "total": 0}
         per_user[username]["total"] += 1
@@ -578,6 +591,7 @@ def compute_report(entries: list[dict]) -> dict:
     average_share = total_on_track / total if total > 0 else 0.0
 
     return {
+        "per_track": per_track,
         "per_user": per_user,
         "total_on_track": total_on_track,
         "total": total,
@@ -588,15 +602,29 @@ def compute_report(entries: list[dict]) -> dict:
 def print_report(report_data: dict) -> None:
     """Print the on-track report to stdout.
 
-    Outputs one line per user sorted alphabetically, showing on-track count,
-    total count, and percentage.  A final summary line shows the overall
-    average.
+    Outputs a tracks section (number of reporting directories per track,
+    sorted alphabetically with untracked directories last) followed by a
+    blank line, then one line per user sorted alphabetically showing
+    on-track count, total count, and percentage, and finally a summary line
+    with the overall average.
 
     Args:
         report_data: A dict as returned by :func:`compute_report`.
     """
+    col_width = 20
+
+    # --- per-track counts ---
+    per_track: dict[str | None, int] = report_data.get("per_track", {})
+    named_tracks = sorted((t for t in per_track if t is not None))
+    for track in named_tracks:
+        print(f"{track:<{col_width}}: {per_track[track]}")
+    if None in per_track:
+        print(f"{'(untracked)':<{col_width}}: {per_track[None]}")
+    print()
+
+    # --- per-user averages ---
     per_user: dict[str, dict] = report_data["per_user"]
-    username_col_width = 20
+    username_col_width = col_width
     for username in sorted(per_user):
         stats = per_user[username]
         share_pct = stats["share"] * 100

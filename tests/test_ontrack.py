@@ -1728,13 +1728,14 @@ def test_compute_report_empty():
     assert result["total_on_track"] == 0
     assert result["average_share"] == 0.0
     assert result["per_user"] == {}
+    assert result["per_track"] == {}
 
 
 def test_compute_report_all_on_track():
     """compute_report when every entry is on track gives 100% share."""
     entries = [
-        {"username": "alice", "on_track": True},
-        {"username": "alice", "on_track": True},
+        {"username": "alice", "on_track": True, "metadata": {"track": "rna-seq"}},
+        {"username": "alice", "on_track": True, "metadata": {"track": "rna-seq"}},
     ]
     result = compute_report(entries)
     assert result["total"] == 2
@@ -1743,6 +1744,7 @@ def test_compute_report_all_on_track():
     assert result["per_user"]["alice"]["on_track"] == 2
     assert result["per_user"]["alice"]["total"] == 2
     assert result["per_user"]["alice"]["share"] == 1.0
+    assert result["per_track"]["rna-seq"] == 2
 
 
 def test_compute_report_none_on_track():
@@ -1755,6 +1757,8 @@ def test_compute_report_none_on_track():
     assert result["total_on_track"] == 0
     assert result["average_share"] == 0.0
     assert result["per_user"]["bob"]["share"] == 0.0
+    # No metadata → counted as untracked (None key)
+    assert result["per_track"][None] == 2
 
 
 def test_compute_report_mixed_users():
@@ -1793,14 +1797,62 @@ def test_compute_report_missing_username():
     assert result["per_user"][""]["total"] == 2
 
 
+def test_compute_report_per_track_counts():
+    """compute_report tallies per_track correctly across multiple track values."""
+    entries = [
+        {"username": "alice", "on_track": True, "metadata": {"track": "rna-seq"}},
+        {"username": "alice", "on_track": True, "metadata": {"track": "rna-seq"}},
+        {"username": "bob", "on_track": True, "metadata": {"track": "cnv-pipeline"}},
+        {"username": "carol", "on_track": False},
+    ]
+    result = compute_report(entries)
+    assert result["per_track"]["rna-seq"] == 2
+    assert result["per_track"]["cnv-pipeline"] == 1
+    assert result["per_track"][None] == 1
+
+
+def test_compute_report_per_track_no_metadata_key():
+    """Entries whose metadata lacks a 'track' key are counted as untracked."""
+    entries = [
+        {"username": "alice", "on_track": False, "metadata": {"owner": "PI"}},
+    ]
+    result = compute_report(entries)
+    assert result["per_track"][None] == 1
+
+
+def test_compute_report_output_file_includes_per_track(tmp_path):
+    """main with report=True and output writes per_track to the YAML file."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    project = data_dir / "project"
+    project.mkdir()
+    (project / "file.txt").write_text("data")
+    (data_dir / "ontrack.yml").write_text("project:\n  track: rna-seq\n")
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        f"paths:\n  - {project}\n"
+        "track:\n  rna-seq:\n"
+    )
+
+    output_file = str(tmp_path / "stats.yaml")
+    main(str(config_file), report=True, output=output_file)
+
+    with open(output_file) as fh:
+        data = yaml.safe_load(fh)
+
+    assert "per_track" in data
+
+
 # ---------------------------------------------------------------------------
 # print_report
 # ---------------------------------------------------------------------------
 
 
 def test_print_report_format(capsys):
-    """print_report outputs one line per user and a total average line."""
+    """print_report outputs track counts, per-user lines, and a total average line."""
     report_data = {
+        "per_track": {"rna-seq": 3, "cnv-pipeline": 1},
         "per_user": {
             "alice": {"on_track": 2, "total": 4, "share": 0.5},
             "bob": {"on_track": 1, "total": 1, "share": 1.0},
@@ -1811,6 +1863,10 @@ def test_print_report_format(capsys):
     }
     print_report(report_data)
     captured = capsys.readouterr()
+    # Track section
+    assert "rna-seq" in captured.out
+    assert "cnv-pipeline" in captured.out
+    # Per-user section
     assert "alice" in captured.out
     assert "2/4" in captured.out
     assert "50.0%" in captured.out
@@ -1823,8 +1879,9 @@ def test_print_report_format(capsys):
 
 
 def test_print_report_sorted_users(capsys):
-    """print_report outputs users in alphabetical order."""
+    """print_report outputs users in alphabetical order, after the track section."""
     report_data = {
+        "per_track": {},
         "per_user": {
             "zara": {"on_track": 0, "total": 1, "share": 0.0},
             "anna": {"on_track": 1, "total": 1, "share": 1.0},
@@ -1844,6 +1901,7 @@ def test_print_report_sorted_users(capsys):
 def test_print_report_empty(capsys):
     """print_report on an empty report outputs only the total average line."""
     report_data = {
+        "per_track": {},
         "per_user": {},
         "total_on_track": 0,
         "total": 0,
@@ -1854,6 +1912,37 @@ def test_print_report_empty(capsys):
     assert "Total average" in captured.out
     assert "0/0" in captured.out
     assert "0.0%" in captured.out
+
+
+def test_print_report_untracked_label(capsys):
+    """print_report shows '(untracked)' for directories without a track."""
+    report_data = {
+        "per_track": {None: 2, "rna-seq": 1},
+        "per_user": {"alice": {"on_track": 1, "total": 3, "share": 1 / 3}},
+        "total_on_track": 1,
+        "total": 3,
+        "average_share": 1 / 3,
+    }
+    print_report(report_data)
+    captured = capsys.readouterr()
+    assert "(untracked)" in captured.out
+    assert "rna-seq" in captured.out
+
+
+def test_print_report_tracks_before_users(capsys):
+    """Track counts appear before per-user lines in the output."""
+    report_data = {
+        "per_track": {"rna-seq": 1},
+        "per_user": {"alice": {"on_track": 1, "total": 1, "share": 1.0}},
+        "total_on_track": 1,
+        "total": 1,
+        "average_share": 1.0,
+    }
+    print_report(report_data)
+    captured = capsys.readouterr()
+    rna_pos = captured.out.index("rna-seq")
+    alice_pos = captured.out.index("alice")
+    assert rna_pos < alice_pos
 
 
 # ---------------------------------------------------------------------------
@@ -1918,6 +2007,7 @@ def test_main_report_output_file(tmp_path):
     assert "total_on_track" in data
     assert "average_share" in data
     assert "per_user" in data
+    assert "per_track" in data
 
 
 def test_main_report_on_track_counted(tmp_path, capsys):
