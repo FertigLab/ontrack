@@ -2042,7 +2042,6 @@ def test_main_report_on_track_counted(tmp_path, capsys):
 
 def test_main_entrypoint_no_args_prints_help(capsys, monkeypatch):
     """Running the script with no arguments prints help and exits with code 0."""
-    import importlib
     import runpy
 
     monkeypatch.setattr(sys, "argv", ["ontrack.py"])

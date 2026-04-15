@@ -847,10 +847,10 @@ if __name__ == "__main__":
             "average) instead of the list of reporting directories."
         ),
     )
+    args = parser.parse_args()
     if not sys.argv[1:]:
         parser.print_help()
         sys.exit(0)
-    args = parser.parse_args()
     main(
         args.config,
         groups=args.groups,
