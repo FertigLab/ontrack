@@ -33,13 +33,21 @@ groups:
 ignore:
   - '.*'
   - '*.tmp'
+
+# Named tracks used to categorise project directories (optional)
+track:
+  rna-seq:
+    description: RNA sequencing analysis projects
+  cnv-pipeline:
+    description: Copy number variation pipeline projects
 ```
 
 | Key | Description |
 |---|---|
 | `paths` | List of top-level paths to scan (required) |
 | `groups` | List of Unix group names; enables group mode (optional, overridden by `--groups`) |
-| `ignore` | Glob patterns matched against base names to exclude from all scans |
+| `ignore` | Glob patterns matched against base names to exclude from all scans (optional) |
+| `track` | Map of valid track names; each key may have optional subfields such as `description` (optional) |
 
 ## Usage
 
@@ -124,20 +132,6 @@ project2:
 
 A directory is **on track** when the `track` field is present with a non-empty value and — when the `track` section is present in `config.yaml` — the value matches a recognised track name. All other fields (`owner`, `created`, etc.) are optional and will be included in both stdout and YAML output when present.
 
-### Configuring valid tracks (`config.yaml`)
-
-The optional `track` section in `config.yaml` defines the set of recognised track names. Each key is a track name; optional subfields (e.g. `description`, `pi`) may be added:
-
-```yaml
-track:
-  rna-seq:
-    description: RNA sequencing analysis projects
-  cnv-pipeline:
-    description: Copy number variation pipeline projects
-```
-
-When this section is present, a project's `track` value must match one of these keys for the directory to be considered *on track*.
-
 ### On-track status in output
 
 **stdout:**
@@ -168,26 +162,3 @@ Created   : 2024-01-15
 ```
 
 When no `ontrack.yml` is found in the parent directory, `on_track` is `false` and no `metadata` key is emitted.
-
-## Example Output
-
-```
-Directory : /data/projects/alice
-Username  : alice
-Group     : researchers
-Files     : 1042
-Total size: 3.57 GB
-On track  : Yes
-Track     : rna-seq
-Owner     : alice
-Created   : 2024-01-15
-
-Directory : /data/projects/bob
-Username  : bob
-Group     : researchers
-Files     : 204
-Total size: 512.00 MB
-On track  : No
-```
-
-Use `--output report.yaml` to save results as structured YAML instead.
