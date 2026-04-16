@@ -13,7 +13,7 @@ A command-line tool that scans directory trees and reports file statistics (file
 ## Installation
 
 ```bash
-pip install -r requirements.txt
+pip install git+https://github.com/FertigLab/ontrack.git
 ```
 
 ## Configuration
@@ -52,7 +52,7 @@ track:
 ## Usage
 
 ```bash
-python3 ontrack.py --config config.yaml [OPTIONS]
+ontrack --config config.yaml [OPTIONS]
 ```
 
 | Option | Description |
@@ -69,14 +69,14 @@ python3 ontrack.py --config config.yaml [OPTIONS]
 **Default mode** — reports stats directly for each configured directory:
 
 ```bash
-python3 ontrack.py --config config.yaml
+ontrack --config config.yaml
 ```
 
 **Group mode** — for each configured directory, finds and reports subdirectories owned by members of the specified Unix groups. Descends until a directory containing at least one file is found:
 
 ```bash
-python3 ontrack.py --config config.yaml --groups researchers
-python3 ontrack.py --config config.yaml --find alice
+ontrack --config config.yaml --groups researchers
+ontrack --config config.yaml --find alice
 ```
 
 ## Reporting Directory & Descent

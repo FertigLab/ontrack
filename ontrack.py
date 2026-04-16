@@ -831,7 +831,8 @@ def main(
                 _print_directory_entry(entry)
 
 
-if __name__ == "__main__":
+def cli() -> None:
+    """Run the command-line interface."""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     parser = argparse.ArgumentParser(
         description=(
@@ -920,3 +921,7 @@ if __name__ == "__main__":
         report=args.report,
         find=args.find,
     )
+
+
+if __name__ == "__main__":
+    cli()
