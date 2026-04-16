@@ -62,6 +62,7 @@ python3 ontrack.py --config config.yaml [OPTIONS]
 | `--light` | Skip file-count and size scanning; only report directory and owner |
 | `--progress` | Show progress bars while scanning |
 | `--output FILE` | Write the report as YAML to `FILE` instead of printing to stdout |
+| `--find VALUE` | Return only entries where any output field exactly matches `VALUE` |
 
 ## Operating Modes
 
@@ -75,6 +76,7 @@ python3 ontrack.py --config config.yaml
 
 ```bash
 python3 ontrack.py --config config.yaml --groups researchers
+python3 ontrack.py --config config.yaml --find alice
 ```
 
 ## Reporting Directory & Descent
