@@ -969,7 +969,7 @@ def test_main_find_filters_stdout_by_track(tmp_path, capsys):
     assert str(project_b) not in captured.out
 
 
-def test_main_find_filters_stdout_by_on_track_yes_no(tmp_path, capsys):
+def test_main_find_filters_by_on_track_status(tmp_path, capsys):
     """main with find='Yes' keeps on-track entries and excludes non-on-track ones."""
     on_track_dir = tmp_path / "on_track_dir"
     off_track_dir = tmp_path / "off_track_dir"
