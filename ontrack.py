@@ -488,6 +488,11 @@ def _value_matches_find(value: object, find: str) -> bool:
     dicts are searched by value, sequences by element, and booleans are
     matched both as YAML-style values (``True``/``False``) and user-facing
     status values (``Yes``/``No``).
+
+    Args:
+        value: Value to inspect for an exact match.  May be a scalar, dict,
+            sequence, or boolean.
+        find: Exact search string supplied by the user.
     """
     if isinstance(value, dict):
         return any(_value_matches_find(v, find) for v in value.values())
@@ -495,20 +500,29 @@ def _value_matches_find(value: object, find: str) -> bool:
         return any(_value_matches_find(v, find) for v in value)
     if isinstance(value, bool):
         if value:
-            return find in ("True", "true", "Yes")
-        return find in ("False", "false", "No")
+            return find in ("True", "Yes")
+        return find in ("False", "No")
     return str(value) == find
 
 
 def _entry_matches_find(entry: dict, find: str | None) -> bool:
-    """Return ``True`` when *entry* has at least one field exactly matching *find*."""
+    """Return ``True`` when *entry* has at least one field exactly matching *find*.
+
+    Args:
+        entry: Directory entry dict to inspect.
+        find: Optional exact-match search string.  ``None`` disables filtering.
+    """
     if find is None:
         return True
     return any(_value_matches_find(value, find) for value in entry.values())
 
 
 def _print_directory_entry(entry: dict) -> None:
-    """Print a single directory *entry* in the standard stdout format."""
+    """Print a single directory *entry* in the standard stdout format.
+
+    Args:
+        entry: Directory entry dict to print.
+    """
     print(f"Directory : {entry['directory']}")
     print(f"Username  : {entry['username']}")
     if "groups" in entry:
