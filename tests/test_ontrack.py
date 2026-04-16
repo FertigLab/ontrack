@@ -978,10 +978,19 @@ def test_main_find_filters_stdout_by_on_track_yes_no(tmp_path, capsys):
     (on_track_dir / "a.txt").write_text("a")
     (off_track_dir / "b.txt").write_text("b")
 
-    (tmp_path / "ontrack.yml").write_text("on_track_dir:\n  track: rna-seq\n")
+    (tmp_path / "ontrack.yml").write_text(
+        "on_track_dir:\n"
+        "  track: rna-seq\n"
+        "off_track_dir:\n"
+        "  track: unknown-track\n"
+    )
 
     config_file = tmp_path / "config.yaml"
-    config_file.write_text(f"paths:\n  - {on_track_dir}\n  - {off_track_dir}\n")
+    config_file.write_text(
+        f"paths:\n  - {on_track_dir}\n  - {off_track_dir}\n"
+        "track:\n"
+        "  rna-seq:\n"
+    )
 
     main(str(config_file), light=True, find="Yes")
     captured = capsys.readouterr()
