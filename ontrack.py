@@ -494,7 +494,9 @@ def _value_matches_find(value: object, find: str) -> bool:
     if isinstance(value, (list, tuple, set)):
         return any(_value_matches_find(v, find) for v in value)
     if isinstance(value, bool):
-        return find in {str(value), str(value).lower(), "Yes" if value else "No"}
+        if value:
+            return find in ("True", "true", "Yes")
+        return find in ("False", "false", "No")
     return str(value) == find
 
 
