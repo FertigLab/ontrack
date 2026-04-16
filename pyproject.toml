@@ -15,6 +15,3 @@ dependencies = [
 
 [project.scripts]
 ontrack = "ontrack:cli"
-
-[tool.setuptools]
-py-modules = ["ontrack"]

@@ -832,7 +832,10 @@ def main(
 
 
 def cli() -> None:
-    """Run the command-line interface."""
+    """Entry point for the ontrack CLI.
+
+    Parses command-line arguments and invokes :func:`main`.
+    """
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     parser = argparse.ArgumentParser(
         description=(
