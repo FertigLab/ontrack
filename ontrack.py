@@ -481,6 +481,54 @@ def _build_directory_entry(
     return entry
 
 
+def _value_matches_find(value: object, find: str) -> bool:
+    """Return ``True`` if *value* contains an exact match for *find*.
+
+    Supports nested structures used in output entries:
+    dicts are searched by value, sequences by element, and booleans are
+    matched both as YAML-style values (``True``/``False``) and user-facing
+    status values (``Yes``/``No``).
+    """
+    if isinstance(value, dict):
+        return any(_value_matches_find(v, find) for v in value.values())
+    if isinstance(value, (list, tuple, set)):
+        return any(_value_matches_find(v, find) for v in value)
+    if isinstance(value, bool):
+        return find in {str(value), str(value).lower(), "Yes" if value else "No"}
+    return str(value) == find
+
+
+def _entry_matches_find(entry: dict, find: str | None) -> bool:
+    """Return ``True`` when *entry* has at least one field exactly matching *find*."""
+    if find is None:
+        return True
+    return any(_value_matches_find(value, find) for value in entry.values())
+
+
+def _print_directory_entry(entry: dict) -> None:
+    """Print a single directory *entry* in the standard stdout format."""
+    print(f"Directory : {entry['directory']}")
+    print(f"Username  : {entry['username']}")
+    if "groups" in entry:
+        print(f"Group     : {', '.join(entry['groups'])}")
+    if "file_count" in entry:
+        print(f"Files     : {entry['file_count']}")
+        print(f"Total size: {entry['total_size_human']}")
+    print(f"On track  : {'Yes' if entry['on_track'] else 'No'}")
+    if "metadata" in entry:
+        meta = entry["metadata"]
+        # Required fields are printed first in a defined order.  Missing
+        # required fields are silently skipped here; _is_on_track already
+        # validates their presence and will have set on_track=False accordingly.
+        for field in _REQUIRED_METADATA_FIELDS:
+            if field in meta:
+                print(f"{field.capitalize():<10}: {meta[field]}")
+        for key, value in meta.items():
+            if key not in _REQUIRED_METADATA_FIELDS:
+                print(f"{key.capitalize():<10}: {value}")
+    print()
+
+
 def report_directory(
     path: str,
     groups: list[str] | None = None,
@@ -513,26 +561,7 @@ def report_directory(
     if entry is None:
         return
 
-    print(f"Directory : {entry['directory']}")
-    print(f"Username  : {entry['username']}")
-    if "groups" in entry:
-        print(f"Group     : {', '.join(entry['groups'])}")
-    if "file_count" in entry:
-        print(f"Files     : {entry['file_count']}")
-        print(f"Total size: {entry['total_size_human']}")
-    print(f"On track  : {'Yes' if entry['on_track'] else 'No'}")
-    if "metadata" in entry:
-        meta = entry["metadata"]
-        # Required fields are printed first in a defined order.  Missing
-        # required fields are silently skipped here; _is_on_track already
-        # validates their presence and will have set on_track=False accordingly.
-        for field in _REQUIRED_METADATA_FIELDS:
-            if field in meta:
-                print(f"{field.capitalize():<10}: {meta[field]}")
-        for key, value in meta.items():
-            if key not in _REQUIRED_METADATA_FIELDS:
-                print(f"{key.capitalize():<10}: {value}")
-    print()
+    _print_directory_entry(entry)
 
 
 def compute_report(entries: list[dict]) -> dict:
@@ -669,6 +698,7 @@ def main(
     progress: bool = False,
     output: str | None = None,
     report: bool = False,
+    find: str | None = None,
 ) -> None:
     """Run ontrack with the given options.
 
@@ -683,6 +713,8 @@ def main(
             total average) instead of the list of reporting directories.  When
             *output* is also given the statistics are written as YAML to that
             file; otherwise they are printed to stdout.
+        find: Optional exact-match filter.  Only entries containing at least
+            one output field whose value exactly matches this string are kept.
     """
     config = load_config(config_path)
     paths: list[str] = config.get("paths", [])
@@ -744,7 +776,7 @@ def main(
                 ignore_patterns=ignore_patterns,
                 valid_tracks=valid_tracks,
             )
-            if entry is not None:
+            if entry is not None and _entry_matches_find(entry, find):
                 entries.append(entry)
         report_data = compute_report(entries)
         if output is not None:
@@ -764,14 +796,14 @@ def main(
                 ignore_patterns=ignore_patterns,
                 valid_tracks=valid_tracks,
             )
-            if entry is not None:
+            if entry is not None and _entry_matches_find(entry, find):
                 results.append(entry)
         with open(output, "w") as fh:
             yaml.dump(results, fh, default_flow_style=False, allow_unicode=True)
         logger.info("Report written to %s", output)
     else:
         for path in iterator:
-            report_directory(
+            entry = _build_directory_entry(
                 path,
                 groups=groups,
                 light=light,
@@ -779,6 +811,8 @@ def main(
                 ignore_patterns=ignore_patterns,
                 valid_tracks=valid_tracks,
             )
+            if entry is not None and _entry_matches_find(entry, find):
+                _print_directory_entry(entry)
 
 
 if __name__ == "__main__":
@@ -800,6 +834,7 @@ if __name__ == "__main__":
             "  %(prog)s --config config.yaml --groups mygroup --light\n"
             "  %(prog)s --config config.yaml --groups mygroup --report\n"
             "  %(prog)s --config config.yaml --output report.yaml\n"
+            "  %(prog)s --config config.yaml --find alice\n"
             "  %(prog)s --config config.yaml --progress\n"
         ),
     )
@@ -847,6 +882,15 @@ if __name__ == "__main__":
             "average) instead of the list of reporting directories."
         ),
     )
+    parser.add_argument(
+        "--find",
+        default=None,
+        metavar="VALUE",
+        help=(
+            "Return only entries where at least one output field exactly matches VALUE "
+            "(e.g. username, track name, Yes/No on-track status)."
+        ),
+    )
     args = parser.parse_args()
     if not sys.argv[1:]:
         parser.print_help()
@@ -858,4 +902,5 @@ if __name__ == "__main__":
         progress=args.progress,
         output=args.output,
         report=args.report,
+        find=args.find,
     )

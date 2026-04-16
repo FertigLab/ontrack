@@ -940,6 +940,84 @@ def test_main_output_light_mode(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Filtering (--find)
+# ---------------------------------------------------------------------------
+
+
+def test_main_find_filters_stdout_by_track(tmp_path, capsys):
+    """main with find keeps only entries with an exact matching track value."""
+    project_a = tmp_path / "project_a"
+    project_b = tmp_path / "project_b"
+    project_a.mkdir()
+    project_b.mkdir()
+    (project_a / "a.txt").write_text("a")
+    (project_b / "b.txt").write_text("b")
+
+    (tmp_path / "ontrack.yml").write_text(
+        "project_a:\n"
+        "  track: rna-seq\n"
+        "project_b:\n"
+        "  track: cnv-pipeline\n"
+    )
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(f"paths:\n  - {project_a}\n  - {project_b}\n")
+
+    main(str(config_file), light=True, find="rna-seq")
+    captured = capsys.readouterr()
+    assert str(project_a) in captured.out
+    assert str(project_b) not in captured.out
+
+
+def test_main_find_filters_stdout_by_on_track_yes_no(tmp_path, capsys):
+    """main with find='Yes' keeps on-track entries and excludes non-on-track ones."""
+    on_track_dir = tmp_path / "on_track_dir"
+    off_track_dir = tmp_path / "off_track_dir"
+    on_track_dir.mkdir()
+    off_track_dir.mkdir()
+    (on_track_dir / "a.txt").write_text("a")
+    (off_track_dir / "b.txt").write_text("b")
+
+    (tmp_path / "ontrack.yml").write_text("on_track_dir:\n  track: rna-seq\n")
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(f"paths:\n  - {on_track_dir}\n  - {off_track_dir}\n")
+
+    main(str(config_file), light=True, find="Yes")
+    captured = capsys.readouterr()
+    assert str(on_track_dir) in captured.out
+    assert str(off_track_dir) not in captured.out
+
+
+def test_main_find_filters_yaml_output_exact_match(tmp_path):
+    """main with output and find keeps only entries with an exact field-value match."""
+    project_a = tmp_path / "project_a"
+    project_b = tmp_path / "project_b"
+    project_a.mkdir()
+    project_b.mkdir()
+    (project_a / "a.txt").write_text("a")
+    (project_b / "b.txt").write_text("b")
+
+    (tmp_path / "ontrack.yml").write_text(
+        "project_a:\n"
+        "  track: rna-seq\n"
+        "project_b:\n"
+        "  track: rnaseq\n"
+    )
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(f"paths:\n  - {project_a}\n  - {project_b}\n")
+
+    output_file = str(tmp_path / "report.yaml")
+    main(str(config_file), light=True, output=output_file, find="rna-seq")
+
+    with open(output_file) as fh:
+        report = yaml.safe_load(fh)
+
+    assert [entry["directory"] for entry in report] == [str(project_a)]
+
+
+# ---------------------------------------------------------------------------
 # get_directory_stats with show_progress
 # ---------------------------------------------------------------------------
 
