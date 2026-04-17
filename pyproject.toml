@@ -7,7 +7,7 @@ name = "ontrack"
 version = "0.1.0"
 description = "Scan directory trees and report file statistics from YAML configuration."
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.10"
 dependencies = [
   "PyYAML>=6.0",
   "tqdm>=4.0",

@@ -6,7 +6,7 @@ A command-line tool that scans directory trees and reports file statistics (file
 
 ## Requirements
 
-- Python 3.12+
+- Python 3.10+
 - [PyYAML](https://pyyaml.org/) >= 6.0
 - [tqdm](https://tqdm.github.io/) >= 4.0
 
