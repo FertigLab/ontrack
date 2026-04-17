@@ -168,7 +168,7 @@ def _is_on_track(
         metadata: A metadata dict returned by :func:`_get_directory_metadata`,
             or ``None`` when no entry was found.
         valid_tracks: Optional set of track names loaded from the ``track``
-            section of ``config.yaml``.  When supplied and non-empty, the
+            section of ``ontrack.config``.  When supplied and non-empty, the
             ``track`` field of *metadata* must be a member of this set.
     """
     if not isinstance(metadata, dict):
@@ -456,7 +456,7 @@ def _build_directory_entry(
             :func:`get_directory_stats`; matched files and directories are
             excluded from the stats.
         valid_tracks: Optional set of recognised track names from the
-            ``track`` section of ``config.yaml``.  Forwarded to
+            ``track`` section of ``ontrack.config``.  Forwarded to
             :func:`_is_on_track`.
     """
     if not pathlib.Path(path).is_dir():
@@ -563,7 +563,7 @@ def report_directory(
         ignore_patterns: Shell-style glob patterns; matched files and
             directories are excluded from stats.
         valid_tracks: Optional set of recognised track names from the
-            ``track`` section of ``config.yaml``.  Forwarded to
+            ``track`` section of ``ontrack.config``.  Forwarded to
             :func:`_build_directory_entry`.
     """
     entry = _build_directory_entry(
@@ -708,7 +708,7 @@ def _is_ignored(name: str, patterns: list[str]) -> bool:
 
 
 def main(
-    config_path: str = "config.yaml",
+    config_path: str = "ontrack.config",
     groups: list[str] | None = None,
     light: bool = False,
     progress: bool = False,
@@ -831,7 +831,11 @@ def main(
                 _print_directory_entry(entry)
 
 
-if __name__ == "__main__":
+def cli() -> None:
+    """Entry point for the ontrack CLI.
+
+    Parses command-line arguments and invokes :func:`main`.
+    """
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     parser = argparse.ArgumentParser(
         description=(
@@ -845,19 +849,19 @@ if __name__ == "__main__":
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "examples:\n"
-            "  %(prog)s --config config.yaml\n"
-            "  %(prog)s --config config.yaml --groups mygroup\n"
-            "  %(prog)s --config config.yaml --groups mygroup --light\n"
-            "  %(prog)s --config config.yaml --groups mygroup --report\n"
-            "  %(prog)s --config config.yaml --output report.yaml\n"
-            "  %(prog)s --config config.yaml --find alice\n"
-            "  %(prog)s --config config.yaml --progress\n"
+            "  %(prog)s --config ontrack.config\n"
+            "  %(prog)s --config ontrack.config --groups mygroup\n"
+            "  %(prog)s --config ontrack.config --groups mygroup --light\n"
+            "  %(prog)s --config ontrack.config --groups mygroup --report\n"
+            "  %(prog)s --config ontrack.config --output report.yaml\n"
+            "  %(prog)s --config ontrack.config --find alice\n"
+            "  %(prog)s --config ontrack.config --progress\n"
         ),
     )
     parser.add_argument(
         "--config",
-        default="config.yaml",
-        help="Path to the configuration YAML file (default: config.yaml)",
+        default="ontrack.config",
+        help="Path to the configuration YAML file (default: ontrack.config)",
     )
     parser.add_argument(
         "--groups",
@@ -920,3 +924,7 @@ if __name__ == "__main__":
         report=args.report,
         find=args.find,
     )
+
+
+if __name__ == "__main__":
+    cli()

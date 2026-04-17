@@ -6,19 +6,19 @@ A command-line tool that scans directory trees and reports file statistics (file
 
 ## Requirements
 
-- Python 3.12+
+- Python 3.10+
 - [PyYAML](https://pyyaml.org/) >= 6.0
 - [tqdm](https://tqdm.github.io/) >= 4.0
 
 ## Installation
 
 ```bash
-pip install -r requirements.txt
+pip install git+https://github.com/FertigLab/ontrack.git
 ```
 
 ## Configuration
 
-Create a YAML config file (see [`config.yaml`](config.yaml) for a template):
+Create a YAML config file (see [`ontrack.config`](ontrack.config) for a template):
 
 ```yaml
 # Top-level directories to scan
@@ -52,12 +52,12 @@ track:
 ## Usage
 
 ```bash
-python3 ontrack.py --config config.yaml [OPTIONS]
+ontrack --config ontrack.config [OPTIONS]
 ```
 
 | Option | Description |
 |---|---|
-| `--config FILE` | Path to the YAML config file (default: `config.yaml`) |
+| `--config FILE` | Path to the YAML config file (default: `ontrack.config`) |
 | `--groups GROUP [GROUP ...]` | One or more Unix group names; overrides the `groups` key in the config file |
 | `--light` | Skip file-count and size scanning; only report directory and owner |
 | `--progress` | Show progress bars while scanning |
@@ -69,14 +69,14 @@ python3 ontrack.py --config config.yaml [OPTIONS]
 **Default mode** — reports stats directly for each configured directory:
 
 ```bash
-python3 ontrack.py --config config.yaml
+ontrack --config ontrack.config
 ```
 
 **Group mode** — for each configured directory, finds and reports subdirectories owned by members of the specified Unix groups. Descends until a directory containing at least one file is found:
 
 ```bash
-python3 ontrack.py --config config.yaml --groups researchers
-python3 ontrack.py --config config.yaml --find alice
+ontrack --config ontrack.config --groups researchers
+ontrack --config ontrack.config --find alice
 ```
 
 ## Reporting Directory & Descent
@@ -130,9 +130,9 @@ project2:
 
 | Field | Type | Purpose |
 |---|---|---|
-| `track` | string | Track name matching a key in `config.yaml`'s `track` section |
+| `track` | string | Track name matching a key in `ontrack.config`'s `track` section |
 
-A directory is **on track** when the `track` field is present with a non-empty value and — when the `track` section is present in `config.yaml` — the value matches a recognised track name. All other fields (`owner`, `created`, etc.) are optional and will be included in both stdout and YAML output when present.
+A directory is **on track** when the `track` field is present with a non-empty value and — when the `track` section is present in `ontrack.config` — the value matches a recognised track name. All other fields (`owner`, `created`, etc.) are optional and will be included in both stdout and YAML output when present.
 
 ### On-track status in output
 
