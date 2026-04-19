@@ -64,9 +64,11 @@ ontrack --config ontrack.config [OPTIONS]
 | `--output FILE` | Write the report as YAML to `FILE` instead of printing to stdout |
 | `--find VALUE` | Return only entries where any output field exactly matches `VALUE` |
 
-## Operating Modes
+### Configuration File Resolution
 
 If `--config` is not provided, ontrack uses the `ONTRACK_CONFIG` environment variable when set; otherwise it falls back to `ontrack.config`.
+
+## Operating Modes
 
 **Default mode** — reports stats directly for each configured directory:
 
