@@ -59,6 +59,8 @@ from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
+_CONFIG_ENV_VAR = "ONTRACK_CONFIG"
+
 
 @functools.lru_cache(maxsize=None)
 def _uid_to_username(uid: int) -> str:
@@ -831,6 +833,26 @@ def main(
                 _print_directory_entry(entry)
 
 
+def _resolve_config_path(cli_config: str | None) -> str:
+    """Resolve the config file path from CLI, environment, and fallback.
+
+    Args:
+        cli_config: Value passed through ``--config``.  When provided, this
+            always takes precedence.
+
+    Returns:
+        The config file path, resolved in this order:
+        ``--config`` value, then ``ONTRACK_CONFIG`` environment variable, then
+        ``ontrack.config``.
+    """
+    if cli_config is not None:
+        return cli_config
+    env_config = os.environ.get(_CONFIG_ENV_VAR)
+    if env_config:
+        return env_config
+    return "ontrack.config"
+
+
 def cli() -> None:
     """Entry point for the ontrack CLI.
 
@@ -860,8 +882,12 @@ def cli() -> None:
     )
     parser.add_argument(
         "--config",
-        default="ontrack.config",
-        help="Path to the configuration YAML file (default: ontrack.config)",
+        default=None,
+        help=(
+            "Path to the configuration YAML file. Defaults to the "
+            "ONTRACK_CONFIG environment variable when set, otherwise "
+            "ontrack.config."
+        ),
     )
     parser.add_argument(
         "--groups",
@@ -915,8 +941,9 @@ def cli() -> None:
     if not sys.argv[1:]:
         parser.print_help()
         sys.exit(0)
+    config_path = _resolve_config_path(args.config)
     main(
-        args.config,
+        config_path,
         groups=args.groups,
         light=args.light,
         progress=args.progress,
