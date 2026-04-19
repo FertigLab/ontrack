@@ -57,7 +57,7 @@ ontrack --config ontrack.config [OPTIONS]
 
 | Option | Description |
 |---|---|
-| `--config FILE` | Path to the YAML config file (overrides `ONTRACK_CONFIG`; default: `ontrack.config`) |
+| `--config FILE` | Path to the YAML config file |
 | `--groups GROUP [GROUP ...]` | One or more Unix group names; overrides the `groups` key in the config file |
 | `--light` | Skip file-count and size scanning; only report directory and owner |
 | `--progress` | Show progress bars while scanning |

@@ -842,8 +842,8 @@ def _resolve_config_path(cli_config: str | None) -> str:
 
     Returns:
         The config file path, resolved in this order:
-        ``--config`` value, then the ``_CONFIG_ENV_VAR`` (``ONTRACK_CONFIG``)
-        environment variable, then ``ontrack.config``.
+        ``--config`` value, then the ``ONTRACK_CONFIG`` environment variable,
+        then ``ontrack.config``.
     """
     if cli_config is not None:
         return cli_config
