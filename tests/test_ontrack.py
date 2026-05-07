@@ -21,6 +21,7 @@ from ontrack import (
     _is_ignored,
     _is_on_track,
     _load_ontrack_yml,
+    _resolve_config_path,
     _run_du,
     _uid_to_username,
     compute_report,
@@ -2120,6 +2121,29 @@ def test_main_report_on_track_counted(tmp_path, capsys):
     # The project is on track, so on_track count should be 1/1
     assert "1/1" in captured.out
     assert "100.0%" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# config path resolution
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_config_path_prefers_cli(monkeypatch):
+    """_resolve_config_path gives precedence to the explicit CLI value."""
+    monkeypatch.setenv("ONTRACK_CONFIG", "/tmp/from-env.config")
+    assert _resolve_config_path("/tmp/from-cli.config") == "/tmp/from-cli.config"
+
+
+def test_resolve_config_path_falls_back_to_env(monkeypatch):
+    """_resolve_config_path uses ONTRACK_CONFIG when CLI value is absent."""
+    monkeypatch.setenv("ONTRACK_CONFIG", "/tmp/from-env.config")
+    assert _resolve_config_path(None) == "/tmp/from-env.config"
+
+
+def test_resolve_config_path_default_without_cli_or_env(monkeypatch):
+    """_resolve_config_path defaults to ontrack.config without CLI/env values."""
+    monkeypatch.delenv("ONTRACK_CONFIG", raising=False)
+    assert _resolve_config_path(None) == "ontrack.config"
 
 
 # ---------------------------------------------------------------------------
