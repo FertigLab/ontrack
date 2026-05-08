@@ -2469,9 +2469,8 @@ def test_print_html_report_html_escaping(capsys):
     out = capsys.readouterr().out
     assert "&lt;special&gt;" in out
     assert "<special>" not in out
-    assert "alice&amp;bob" in out
-    # Verify the raw ampersand is not present unescaped (i.e. not followed by 'b' directly)
-    assert "&bob" not in out
+    # The properly escaped form must appear exactly once (and not the raw form).
+    assert out.count("alice&amp;bob") == 1
 
 
 def test_print_html_report_no_tracks(capsys):
