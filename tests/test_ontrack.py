@@ -2269,7 +2269,6 @@ def test_entry_to_html_row_html_escaping():
     row = _entry_to_html_row(entry, has_groups=False, has_sizes=False, meta_keys=[])
     assert "&lt;project&gt;" in row
     assert "alice&amp;bob" in row
-    assert "&lt;project&gt;" in row
     # Raw unescaped chars must not appear as tags
     assert "<project>" not in row
 
@@ -2471,7 +2470,8 @@ def test_print_html_report_html_escaping(capsys):
     assert "&lt;special&gt;" in out
     assert "<special>" not in out
     assert "alice&amp;bob" in out
-    assert "alice&bob" not in out
+    # Verify the raw ampersand is not present unescaped (i.e. not followed by 'b' directly)
+    assert "&bob" not in out
 
 
 def test_print_html_report_no_tracks(capsys):

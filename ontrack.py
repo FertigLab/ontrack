@@ -802,6 +802,8 @@ def _print_html_entries(entries: list[dict]) -> None:
     if has_sizes:
         headers.extend(["Files", "Total Size"])
     headers.append("On Track")
+    # capitalize() matches the existing plain-text _print_directory_entry behaviour
+    # (first letter upper, rest lower).  Metadata keys are expected to be lowercase.
     headers.extend(k.capitalize() for k in meta_keys)
 
     print(f'<table style="{_CSS_TABLE}">')
