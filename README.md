@@ -111,7 +111,7 @@ This means an `ignore` list such as `['.*', '*.tmp']` will cause ontrack to look
 ontrack supports an optional metadata store file named **`ontrack.yml`**. When this file is found in a directory during descent, it has two effects:
 
 1. **Signals reporting directories** — all non-ignored subdirectories at that level become reporting directories. Descent stops; the `ontrack.yml` file itself is never counted as a visible file.
-2. **Declares per-directory metadata** — each subdirectory can have an entry in the store. A directory is considered *on track* when it has an entry containing all three required fields.
+2. **Declares per-directory metadata** — each subdirectory can have an entry in the store. A directory is considered *on track* when it has an entry containing all the only required field `track:` that maps back the to entry in the config (see above).
 
 ### ontrack.yml format
 
