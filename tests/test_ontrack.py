@@ -1,12 +1,14 @@
 """Tests for ontrack.py"""
 
 import grp
+import json
 import logging
 import os
 import pwd
 import sys
 import tempfile
 import textwrap
+import urllib.error
 
 import pytest
 import yaml
@@ -34,6 +36,7 @@ from ontrack import (
     main,
     print_report,
     report_directory,
+    send_slack_message,
 )
 
 
@@ -938,6 +941,155 @@ def test_main_output_light_mode(tmp_path):
     assert "file_count" not in entry
     assert "total_size" not in entry
     assert "total_size_human" not in entry
+
+
+# ---------------------------------------------------------------------------
+# Slack output (--slack)
+# ---------------------------------------------------------------------------
+
+
+def test_send_slack_message_posts_json_payload(monkeypatch):
+    """send_slack_message posts a JSON payload to the provided webhook URL."""
+    captured: dict = {}
+
+    class _DummyResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    def _fake_urlopen(request):
+        captured["url"] = request.full_url
+        headers = {k.lower(): v for k, v in request.header_items()}
+        captured["content_type"] = headers.get("content-type")
+        captured["payload"] = json.loads(request.data.decode("utf-8"))
+        return _DummyResponse()
+
+    import ontrack as rd
+
+    monkeypatch.setattr(rd.urllib.request, "urlopen", _fake_urlopen)
+    send_slack_message("hello", "https://example.com/webhook")
+
+    assert captured["url"] == "https://example.com/webhook"
+    assert captured["content_type"] == "application/json"
+    assert captured["payload"] == {"text": "```\nhello\n```"}
+
+
+def test_send_slack_message_logs_warning_on_network_error(monkeypatch, caplog):
+    """send_slack_message logs a warning when webhook delivery fails."""
+    import ontrack as rd
+
+    def _raise_url_error(_request):
+        raise urllib.error.URLError("network down")
+
+    monkeypatch.setattr(rd.urllib.request, "urlopen", _raise_url_error)
+
+    with caplog.at_level(logging.WARNING):
+        send_slack_message("hello", "https://example.com/webhook")
+
+    assert "Could not send Slack message" in caplog.text
+
+
+def test_main_slack_uses_env_webhook_and_sends_stdout(tmp_path, monkeypatch, capsys):
+    """main with slack uses env webhook URL and sends captured stdout text."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "file.txt").write_text("hello")
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(f"paths:\n  - {data_dir}\n")
+
+    calls: list[tuple[str, str]] = []
+    import ontrack as rd
+
+    monkeypatch.setenv("ONTRACK_SLACK_WEBHOOK", "https://env.example/webhook")
+    monkeypatch.setattr(rd, "send_slack_message", lambda text, url: calls.append((text, url)))
+
+    main(str(config_file), slack=True)
+    captured = capsys.readouterr()
+
+    assert len(calls) == 1
+    assert calls[0][1] == "https://env.example/webhook"
+    assert str(data_dir) in calls[0][0]
+    assert "Directory :" in calls[0][0]
+    assert str(data_dir) in captured.out
+
+
+def test_main_slack_uses_config_webhook_when_env_missing(tmp_path, monkeypatch):
+    """main with slack falls back to the config webhook URL when env var is absent."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "file.txt").write_text("hello")
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        f"paths:\n  - {data_dir}\n"
+        "slack_webhook: https://config.example/webhook\n"
+    )
+
+    calls: list[tuple[str, str]] = []
+    import ontrack as rd
+
+    monkeypatch.delenv("ONTRACK_SLACK_WEBHOOK", raising=False)
+    monkeypatch.setattr(rd, "send_slack_message", lambda text, url: calls.append((text, url)))
+
+    main(str(config_file), slack=True)
+
+    assert len(calls) == 1
+    assert calls[0][1] == "https://config.example/webhook"
+    assert str(data_dir) in calls[0][0]
+
+
+def test_main_slack_warns_when_webhook_missing(tmp_path, monkeypatch, capsys):
+    """main with slack warns and skips sending when no webhook URL is configured."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "file.txt").write_text("hello")
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(f"paths:\n  - {data_dir}\n")
+
+    calls: list[tuple[str, str]] = []
+    import ontrack as rd
+
+    monkeypatch.delenv("ONTRACK_SLACK_WEBHOOK", raising=False)
+    monkeypatch.setattr(rd, "send_slack_message", lambda text, url: calls.append((text, url)))
+
+    main(str(config_file), slack=True)
+    captured = capsys.readouterr()
+
+    assert calls == []
+    assert "Slack webhook URL not configured" in captured.err
+
+
+def test_main_output_and_slack_writes_yaml_and_sends_stdout(tmp_path, monkeypatch, capsys):
+    """main with output and slack writes YAML and sends the captured stdout text."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "file.txt").write_text("hello")
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(f"paths:\n  - {data_dir}\n")
+    output_file = tmp_path / "report.yaml"
+
+    calls: list[tuple[str, str]] = []
+    import ontrack as rd
+
+    monkeypatch.setenv("ONTRACK_SLACK_WEBHOOK", "https://env.example/webhook")
+    monkeypatch.setattr(rd, "send_slack_message", lambda text, url: calls.append((text, url)))
+
+    main(str(config_file), output=str(output_file), slack=True)
+    captured = capsys.readouterr()
+
+    with open(output_file) as fh:
+        report = yaml.safe_load(fh)
+
+    assert isinstance(report, list)
+    assert report[0]["directory"] == str(data_dir)
+    assert captured.out == ""
+    assert len(calls) == 1
+    assert calls[0] == ("", "https://env.example/webhook")
 
 
 # ---------------------------------------------------------------------------
@@ -2181,6 +2333,7 @@ def test_main_entrypoint_help_flag_prints_help(capsys, monkeypatch):
     captured = capsys.readouterr()
     assert "usage:" in captured.out.lower()
     assert "--config" in captured.out
+    assert "--slack" in captured.out
 
 
 def test_main_entrypoint_long_help_flag_prints_help(capsys, monkeypatch):
