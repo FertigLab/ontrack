@@ -44,15 +44,20 @@ Config file keys
 """
 
 import argparse
+import contextlib
 import fnmatch
 import functools
 import grp
+import io
+import json
 import logging
 import os
 import pathlib
 import pwd
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 
 import yaml
 from tqdm import tqdm
@@ -60,6 +65,7 @@ from tqdm import tqdm
 logger = logging.getLogger(__name__)
 
 _CONFIG_ENV_VAR = "ONTRACK_CONFIG"
+_SLACK_WEBHOOK_ENV_VAR = "ONTRACK_SLACK_WEBHOOK"
 
 
 @functools.lru_cache(maxsize=None)
@@ -693,6 +699,27 @@ def load_config(config_path: str) -> dict:
         return yaml.safe_load(fh)
 
 
+def send_slack_message(text: str, webhook_url: str) -> None:
+    """Send *text* to a Slack incoming webhook URL.
+
+    Args:
+        text: Message body to send.
+        webhook_url: Slack incoming webhook URL.
+    """
+    payload = {"text": f"```\n{text}\n```"}
+    request = urllib.request.Request(
+        webhook_url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request):
+            pass
+    except (urllib.error.URLError, OSError) as exc:
+        logger.warning("Could not send Slack message: %s", exc)
+
+
 def _is_ignored(name: str, patterns: list[str]) -> bool:
     """Return ``True`` if *name* matches any of the given shell-style patterns.
 
@@ -717,6 +744,7 @@ def main(
     output: str | None = None,
     report: bool = False,
     find: str | None = None,
+    slack: bool = False,
 ) -> None:
     """Run ontrack with the given options.
 
@@ -733,6 +761,8 @@ def main(
             file; otherwise they are printed to stdout.
         find: Optional exact-match filter.  Only entries containing at least
             one output field whose value exactly matches this string are kept.
+        slack: When ``True``, send the human-readable stdout output to Slack
+            via an incoming webhook URL.
     """
     config = load_config(config_path)
     paths: list[str] = config.get("paths", [])
@@ -783,54 +813,72 @@ def main(
         else paths_to_process
     )
 
-    if report:
-        entries = []
-        for path in iterator:
-            entry = _build_directory_entry(
-                path,
-                groups=groups,
-                light=True,
-                show_progress=progress,
-                ignore_patterns=ignore_patterns,
-                valid_tracks=valid_tracks,
-            )
-            if entry is not None and _entry_matches_find(entry, find):
-                entries.append(entry)
-        report_data = compute_report(entries)
-        if output is not None:
+    def _run_output() -> None:
+        if report:
+            entries = []
+            for path in iterator:
+                entry = _build_directory_entry(
+                    path,
+                    groups=groups,
+                    light=True,
+                    show_progress=progress,
+                    ignore_patterns=ignore_patterns,
+                    valid_tracks=valid_tracks,
+                )
+                if entry is not None and _entry_matches_find(entry, find):
+                    entries.append(entry)
+            report_data = compute_report(entries)
+            if output is not None:
+                with open(output, "w") as fh:
+                    yaml.dump(report_data, fh, default_flow_style=False, allow_unicode=True)
+                logger.info("Report written to %s", output)
+            else:
+                print_report(report_data)
+        elif output is not None:
+            results = []
+            for path in iterator:
+                entry = _build_directory_entry(
+                    path,
+                    groups=groups,
+                    light=light,
+                    show_progress=progress,
+                    ignore_patterns=ignore_patterns,
+                    valid_tracks=valid_tracks,
+                )
+                if entry is not None and _entry_matches_find(entry, find):
+                    results.append(entry)
             with open(output, "w") as fh:
-                yaml.dump(report_data, fh, default_flow_style=False, allow_unicode=True)
+                yaml.dump(results, fh, default_flow_style=False, allow_unicode=True)
             logger.info("Report written to %s", output)
         else:
-            print_report(report_data)
-    elif output is not None:
-        results = []
-        for path in iterator:
-            entry = _build_directory_entry(
-                path,
-                groups=groups,
-                light=light,
-                show_progress=progress,
-                ignore_patterns=ignore_patterns,
-                valid_tracks=valid_tracks,
-            )
-            if entry is not None and _entry_matches_find(entry, find):
-                results.append(entry)
-        with open(output, "w") as fh:
-            yaml.dump(results, fh, default_flow_style=False, allow_unicode=True)
-        logger.info("Report written to %s", output)
-    else:
-        for path in iterator:
-            entry = _build_directory_entry(
-                path,
-                groups=groups,
-                light=light,
-                show_progress=progress,
-                ignore_patterns=ignore_patterns,
-                valid_tracks=valid_tracks,
-            )
-            if entry is not None and _entry_matches_find(entry, find):
-                _print_directory_entry(entry)
+            for path in iterator:
+                entry = _build_directory_entry(
+                    path,
+                    groups=groups,
+                    light=light,
+                    show_progress=progress,
+                    ignore_patterns=ignore_patterns,
+                    valid_tracks=valid_tracks,
+                )
+                if entry is not None and _entry_matches_find(entry, find):
+                    _print_directory_entry(entry)
+
+    if not slack:
+        _run_output()
+        return
+
+    webhook_url = os.environ.get(_SLACK_WEBHOOK_ENV_VAR) or config.get("slack_webhook")
+    if not webhook_url:
+        print("WARNING: Slack webhook URL not configured – skipping Slack send.", file=sys.stderr)
+        _run_output()
+        return
+
+    stdout_buffer = io.StringIO()
+    with contextlib.redirect_stdout(stdout_buffer):
+        _run_output()
+    stdout_text = stdout_buffer.getvalue()
+    print(stdout_text, end="")
+    send_slack_message(stdout_text, webhook_url)
 
 
 def _resolve_config_path(cli_config: str | None) -> str:
@@ -878,6 +926,7 @@ def cli() -> None:
             "  %(prog)s --config ontrack.config --output report.yaml\n"
             "  %(prog)s --config ontrack.config --find alice\n"
             "  %(prog)s --config ontrack.config --progress\n"
+            "  %(prog)s --config ontrack.config --slack\n"
         ),
     )
     parser.add_argument(
@@ -937,6 +986,15 @@ def cli() -> None:
             "(e.g. username, track name, Yes/No on-track status)."
         ),
     )
+    parser.add_argument(
+        "--slack",
+        action="store_true",
+        default=False,
+        help=(
+            "Send the report to Slack using the webhook URL from "
+            "ONTRACK_SLACK_WEBHOOK or 'slack_webhook' in the config file."
+        ),
+    )
     args = parser.parse_args()
     if not sys.argv[1:]:
         parser.print_help()
@@ -950,6 +1008,7 @@ def cli() -> None:
         output=args.output,
         report=args.report,
         find=args.find,
+        slack=args.slack,
     )
 
 
